@@ -3,6 +3,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { getAccessToken } from '@/api/client'
 import ClientsView from '@/views/ClientsView.vue'
 import LoginView from '@/views/LoginView.vue'
+import ServiceCategoriesView from '@/views/ServiceCategoriesView.vue'
+import ServicesView from '@/views/ServicesView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -21,6 +23,16 @@ const router = createRouter({
       path: '/clients',
       name: 'clients',
       component: ClientsView,
+    },
+    {
+      path: '/service-categories',
+      name: 'service-categories',
+      component: ServiceCategoriesView,
+    },
+    {
+      path: '/services',
+      name: 'services',
+      component: ServicesView,
     },
   ],
 })

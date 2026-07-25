@@ -19,6 +19,8 @@ async function onLogout() {
       <RouterLink class="brand" to="/clients">Glass Factor System</RouterLink>
       <nav>
         <RouterLink to="/clients">Clients</RouterLink>
+        <RouterLink to="/service-categories">Categories</RouterLink>
+        <RouterLink to="/services">Services</RouterLink>
         <button type="button" class="logout" @click="onLogout">Logout</button>
       </nav>
     </header>

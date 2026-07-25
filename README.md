@@ -26,7 +26,8 @@ App: http://127.0.0.1:5173
 - Vite proxies `/api` → `http://127.0.0.1:8000` (see `vite.config.ts`)
 - `VITE_API_BASE_URL` — leave empty in development (proxy); set absolute API origin for production builds
 - Shared API helper: `src/api/client.ts`
-- Health check: `GET /api/health/` via `src/stores/health.ts`
+- Auth: JWT via `/api/auth/token/`
+- Clients CRUD: `/api/v1/clients/`
 
 Start the Django backend first:
 
