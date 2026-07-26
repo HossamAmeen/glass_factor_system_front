@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import { getAccessToken } from '@/api/client'
 import ClientsView from '@/views/ClientsView.vue'
+import ClientStatementView from '@/views/ClientStatementView.vue'
 import InvoiceEditorView from '@/views/InvoiceEditorView.vue'
 import InvoicesView from '@/views/InvoicesView.vue'
 import LoginView from '@/views/LoginView.vue'
@@ -25,6 +26,12 @@ const router = createRouter({
       path: '/clients',
       name: 'clients',
       component: ClientsView,
+    },
+    {
+      path: '/clients/:id',
+      name: 'client-statement',
+      component: ClientStatementView,
+      props: true,
     },
     {
       path: '/service-categories',

@@ -32,6 +32,9 @@ const itemError = ref<string | null>(null)
 const savingHeader = ref(false)
 const savingItem = ref(false)
 const acting = ref(false)
+const payAmount = ref('')
+const payNotes = ref('')
+const payError = ref<string | null>(null)
 
 const header = reactive({
   client: '' as string | number,
@@ -76,6 +79,24 @@ const statusLabels = {
   confirmed: 'مؤكدة',
   cancelled: 'ملغاة',
 } as const
+
+const paymentLabels = {
+  unpaid: 'غير مدفوعة',
+  partial: 'مدفوعة جزئيًا',
+  paid: 'مدفوعة بالكامل',
+} as const
+
+function setFullPayment() {
+  if (invoice.value) payAmount.value = invoice.value.total
+}
+
+function setNoPayment() {
+  payAmount.value = '0'
+}
+
+function setRemainingPayment() {
+  if (invoice.value) payAmount.value = invoice.value.amount_remaining
+}
 
 async function handleAuthError(err: unknown) {
   if (err instanceof ApiError && err.status === 401) {
@@ -232,12 +253,51 @@ async function confirm() {
     itemError.value = 'أضف بندًا واحدًا على الأقل قبل التأكيد.'
     return
   }
+  const amount = payAmount.value.trim()
+  if (amount !== '' && Number(amount) < 0) {
+    payError.value = 'مبلغ الدفع غير صالح.'
+    return
+  }
+  if (amount !== '' && Number(amount) > Number(invoice.value.total)) {
+    payError.value = 'المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة.'
+    return
+  }
   acting.value = true
+  payError.value = null
   try {
-    await invoices.confirm(invoice.value.id)
+    await invoices.confirm(invoice.value.id, amount === '' ? undefined : amount)
+    payAmount.value = ''
   } catch (err) {
     await handleAuthError(err)
-    itemError.value = apiErrorMessage(err, 'تعذر تأكيد الفاتورة.')
+    payError.value = apiErrorMessage(err, 'تعذر تأكيد الفاتورة.')
+  } finally {
+    acting.value = false
+  }
+}
+
+async function recordPayment() {
+  if (!invoice.value || acting.value) return
+  const amount = payAmount.value.trim()
+  if (!amount || Number(amount) <= 0) {
+    payError.value = 'أدخل مبلغ الدفع.'
+    return
+  }
+  if (Number(amount) > Number(invoice.value.amount_remaining)) {
+    payError.value = 'المبلغ أكبر من المتبقي على الفاتورة.'
+    return
+  }
+  acting.value = true
+  payError.value = null
+  try {
+    await invoices.pay(invoice.value.id, {
+      amount,
+      notes: payNotes.value.trim(),
+    })
+    payAmount.value = ''
+    payNotes.value = ''
+  } catch (err) {
+    await handleAuthError(err)
+    payError.value = apiErrorMessage(err, 'تعذر تسجيل الدفعة.')
   } finally {
     acting.value = false
   }
@@ -423,6 +483,65 @@ watch(
         <div class="summary-row"><span>مجموع البنود</span><strong>{{ invoice.subtotal }}</strong></div>
         <div class="summary-row"><span>خصم الفاتورة</span><strong>{{ invoice.discount_amount }}</strong></div>
         <div class="summary-row total"><span>الإجمالي</span><strong>{{ invoice.total }}</strong></div>
+        <template v-if="invoice.status !== 'draft'">
+          <div class="summary-row"><span>المدفوع</span><strong>{{ invoice.amount_paid }}</strong></div>
+          <div class="summary-row">
+            <span>المتبقي (عهدة العميل)</span>
+            <strong>{{ invoice.amount_remaining }}</strong>
+          </div>
+          <div class="summary-row">
+            <span>حالة الدفع</span>
+            <strong>{{ paymentLabels[invoice.payment_status] }}</strong>
+          </div>
+        </template>
+
+        <div v-if="invoice.status === 'draft'" class="pay-box">
+          <UiLabel html-for="confirm-pay">المبلغ المدفوع عند التأكيد</UiLabel>
+          <UiInput
+            id="confirm-pay"
+            v-model="payAmount"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="0 = بدون دفع"
+          />
+          <div class="pay-actions">
+            <UiButton type="button" variant="outline" size="sm" @click="setFullPayment">
+              كامل
+            </UiButton>
+            <UiButton type="button" variant="outline" size="sm" @click="setNoPayment">
+              بدون دفع
+            </UiButton>
+          </div>
+          <p class="hint">المتبقي بعد الدفع يُسجَّل عهدة على العميل.</p>
+        </div>
+
+        <div
+          v-else-if="invoice.status === 'confirmed' && Number(invoice.amount_remaining) > 0"
+          class="pay-box"
+        >
+          <UiLabel html-for="extra-pay">تسجيل دفعة / وديعة</UiLabel>
+          <UiInput
+            id="extra-pay"
+            v-model="payAmount"
+            type="number"
+            min="0"
+            step="0.01"
+            :placeholder="`المتبقي ${invoice.amount_remaining}`"
+          />
+          <UiInput v-model="payNotes" placeholder="ملاحظات الدفع (اختياري)" />
+          <div class="pay-actions">
+            <UiButton type="button" variant="outline" size="sm" @click="setRemainingPayment">
+              المتبقي كاملًا
+            </UiButton>
+            <UiButton type="button" :disabled="acting" @click="recordPayment">
+              {{ acting ? 'جارٍ التسجيل…' : 'تسجيل الدفعة' }}
+            </UiButton>
+          </div>
+        </div>
+
+        <p v-if="payError" class="error">{{ payError }}</p>
+
         <div class="actions">
           <UiButton
             v-if="invoice.status === 'draft'"
@@ -528,6 +647,23 @@ watch(
   border-top: 1px solid hsl(var(--border));
   margin-top: 0.35rem;
   padding-top: 0.75rem;
+}
+.pay-box {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid hsl(var(--border));
+}
+.pay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: hsl(var(--muted-foreground));
 }
 .pill {
   display: inline-flex;

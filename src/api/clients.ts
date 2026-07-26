@@ -29,6 +29,44 @@ export interface PaginatedClients {
   results: Client[]
 }
 
+export type PaymentStatus = 'unpaid' | 'partial' | 'paid'
+
+export interface ClientStatementInvoice {
+  id: number
+  number: string
+  issue_date: string
+  status: 'confirmed' | 'cancelled'
+  total: string
+  amount_paid: string
+  amount_remaining: string
+  payment_status: PaymentStatus
+}
+
+export interface ClientStatementDeposit {
+  id: number
+  amount: string
+  paid_at: string
+  notes: string
+  invoice: number | null
+  invoice_number: string | null
+  created_at: string
+}
+
+export interface ClientStatement {
+  client: Client
+  total_charged: string
+  total_deposits: string
+  balance_due: string
+  invoices: ClientStatementInvoice[]
+  deposits: ClientStatementDeposit[]
+}
+
+export interface ClientDepositPayload {
+  amount: string
+  paid_at?: string
+  notes?: string
+}
+
 export function listClients(params: { search?: string; limit?: number; offset?: number } = {}) {
   const query = new URLSearchParams()
   if (params.search) query.set('search', params.search)
@@ -55,5 +93,16 @@ export function updateClient(id: number, payload: ClientPayload) {
 export function deleteClient(id: number) {
   return apiFetch<void>(`/api/v1/clients/${id}/`, {
     method: 'DELETE',
+  })
+}
+
+export function getClientStatement(id: number) {
+  return apiFetch<ClientStatement>(`/api/v1/clients/${id}/statement/`)
+}
+
+export function createClientDeposit(id: number, payload: ClientDepositPayload) {
+  return apiFetch<ClientStatement>(`/api/v1/clients/${id}/deposits/`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }

@@ -11,10 +11,12 @@ import {
   deleteInvoiceItem,
   getInvoice,
   listInvoices,
+  payInvoice,
   updateInvoice,
   type Invoice,
   type InvoiceCreatePayload,
   type InvoiceItemPayload,
+  type InvoicePaymentPayload,
   type InvoiceStatus,
 } from '@/api/invoices'
 
@@ -83,8 +85,15 @@ export const useInvoicesStore = defineStore('invoices', () => {
     return invoice
   }
 
-  async function confirm(invoiceId: number) {
-    const invoice = await confirmInvoice(invoiceId)
+  async function confirm(invoiceId: number, amountPaid?: string) {
+    const invoice = await confirmInvoice(invoiceId, amountPaid)
+    current.value = invoice
+    items.value = items.value.map((i) => (i.id === invoiceId ? invoice : i))
+    return invoice
+  }
+
+  async function pay(invoiceId: number, payload: InvoicePaymentPayload) {
+    const invoice = await payInvoice(invoiceId, payload)
     current.value = invoice
     items.value = items.value.map((i) => (i.id === invoiceId ? invoice : i))
     return invoice
@@ -117,6 +126,7 @@ export const useInvoicesStore = defineStore('invoices', () => {
     addItem,
     removeItem,
     confirm,
+    pay,
     cancel,
     remove,
   }
