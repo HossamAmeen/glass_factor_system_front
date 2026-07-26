@@ -36,6 +36,8 @@ const form = reactive({
 const hasCategories = computed(() => categories.items.length > 0)
 
 const costMethodLabels: Record<CostMethod, string> = {
+  fixed: 'ثابت',
+  quantity: 'كمية',
   perimeter: 'المحيط',
   area: 'المساحة',
 }
@@ -103,8 +105,8 @@ async function onSubmit() {
     formError.value = 'السعر مطلوب.'
     return
   }
-  if (form.cost_method !== 'perimeter' && form.cost_method !== 'area') {
-    formError.value = 'طريقة حساب السعر مطلوبة.'
+  if (!['fixed', 'quantity', 'perimeter', 'area'].includes(form.cost_method)) {
+    formError.value = 'اختر طريقة حساب صحيحة.'
     return
   }
 
@@ -243,6 +245,8 @@ onMounted(() => {
         <div class="ui-field">
           <UiLabel html-for="service-cost-method">طريقة حساب السعر</UiLabel>
           <UiSelect id="service-cost-method" v-model="form.cost_method" required>
+            <option value="fixed">ثابت</option>
+            <option value="quantity">كمية</option>
             <option value="perimeter">المحيط</option>
             <option value="area">المساحة</option>
           </UiSelect>

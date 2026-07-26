@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import { getAccessToken } from '@/api/client'
 import ClientsView from '@/views/ClientsView.vue'
+import InvoiceEditorView from '@/views/InvoiceEditorView.vue'
+import InvoicesView from '@/views/InvoicesView.vue'
 import LoginView from '@/views/LoginView.vue'
 import ServiceCategoriesView from '@/views/ServiceCategoriesView.vue'
 import ServicesView from '@/views/ServicesView.vue'
@@ -33,6 +35,22 @@ const router = createRouter({
       path: '/services',
       name: 'services',
       component: ServicesView,
+    },
+    {
+      path: '/invoices',
+      name: 'invoices',
+      component: InvoicesView,
+    },
+    {
+      path: '/invoices/new',
+      name: 'invoice-new',
+      component: InvoiceEditorView,
+    },
+    {
+      path: '/invoices/:id',
+      name: 'invoice-edit',
+      component: InvoiceEditorView,
+      props: true,
     },
   ],
 })

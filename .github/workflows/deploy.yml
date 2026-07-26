@@ -10,8 +10,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    name: Typecheck & build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install & build
+        env:
+          VITE_API_BASE_URL: https://api.karlos.hossam-ameen.online
+        run: |
+          npm ci
+          npm run build
+
   deploy:
     name: Deploy to DigitalOcean
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Deploy over SSH
