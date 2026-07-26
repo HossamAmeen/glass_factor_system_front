@@ -1,6 +1,7 @@
 import { apiFetch } from './client'
 
 export type InvoiceStatus = 'draft' | 'confirmed' | 'cancelled'
+export type PaymentStatus = 'unpaid' | 'partial' | 'paid'
 
 export type CostMethod = 'fixed' | 'quantity' | 'perimeter' | 'area'
 
@@ -32,6 +33,9 @@ export interface Invoice {
   notes: string
   subtotal: string
   total: string
+  amount_paid: string
+  amount_remaining: string
+  payment_status: PaymentStatus
   confirmed_at: string | null
   cancelled_at: string | null
   items: InvoiceItem[]
@@ -56,6 +60,12 @@ export interface InvoiceItemPayload {
   length?: string
   width?: string
   discount_amount?: string
+}
+
+export interface InvoicePaymentPayload {
+  amount: string
+  paid_at?: string
+  notes?: string
 }
 
 export interface PaginatedInvoices {
@@ -129,10 +139,19 @@ export function deleteInvoiceItem(invoiceId: number, itemId: number) {
   })
 }
 
-export function confirmInvoice(invoiceId: number) {
+export function confirmInvoice(invoiceId: number, amountPaid?: string) {
   return apiFetch<Invoice>(`/api/v1/invoices/${invoiceId}/confirm/`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify(
+      amountPaid != null && amountPaid !== '' ? { amount_paid: amountPaid } : {},
+    ),
+  })
+}
+
+export function payInvoice(invoiceId: number, payload: InvoicePaymentPayload) {
+  return apiFetch<Invoice>(`/api/v1/invoices/${invoiceId}/pay/`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 

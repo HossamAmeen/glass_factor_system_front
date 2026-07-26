@@ -157,6 +157,13 @@ onMounted(() => {
               <td>{{ client.note || '—' }}</td>
               <td>
                 <div class="row-actions">
+                  <UiButton
+                    variant="outline"
+                    size="sm"
+                    @click="router.push({ name: 'client-statement', params: { id: client.id } })"
+                  >
+                    كشف حساب
+                  </UiButton>
                   <UiButton variant="outline" size="sm" @click="openEdit(client)">تعديل</UiButton>
                   <UiButton variant="destructive" size="sm" @click="onDelete(client)">حذف</UiButton>
                 </div>

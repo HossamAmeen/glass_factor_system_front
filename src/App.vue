@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 
 import UiButton from '@/components/ui/UiButton.vue'
 import { useAuthStore } from '@/stores/auth'
+import { APP_VERSION } from '@/version'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -44,6 +45,7 @@ async function onLogout() {
       </div>
 
       <div class="sidebar-bottom">
+        <p class="app-version" aria-label="إصدار التطبيق">{{ APP_VERSION }}</p>
         <UiButton variant="outline" class="logout-btn" @click="onLogout">
           تسجيل الخروج
         </UiButton>
@@ -133,6 +135,17 @@ async function onLogout() {
 .sidebar-bottom {
   padding-top: 1rem;
   border-top: 1px solid hsl(var(--border));
+  display: grid;
+  gap: 0.65rem;
+}
+
+.app-version {
+  margin: 0;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: hsl(var(--muted-foreground));
 }
 
 .logout-btn {

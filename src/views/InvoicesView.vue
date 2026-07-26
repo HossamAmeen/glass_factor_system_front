@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
-import type { Invoice, InvoiceStatus } from '@/api/invoices'
+import type { Invoice, InvoiceStatus, PaymentStatus } from '@/api/invoices'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -19,6 +19,12 @@ const statusLabels: Record<InvoiceStatus, string> = {
   draft: 'مسودة',
   confirmed: 'مؤكدة',
   cancelled: 'ملغاة',
+}
+
+const paymentLabels: Record<PaymentStatus, string> = {
+  unpaid: 'غير مدفوعة',
+  partial: 'جزئي',
+  paid: 'كامل',
 }
 
 async function handleAuthError(err: unknown) {
@@ -89,6 +95,9 @@ onMounted(load)
               <th>التاريخ</th>
               <th>الحالة</th>
               <th>الإجمالي</th>
+              <th>المدفوع</th>
+              <th>المتبقي</th>
+              <th>الدفع</th>
             </tr>
           </thead>
           <tbody>
@@ -107,6 +116,9 @@ onMounted(load)
                 </span>
               </td>
               <td>{{ invoice.total }}</td>
+              <td>{{ invoice.amount_paid }}</td>
+              <td>{{ invoice.amount_remaining }}</td>
+              <td>{{ paymentLabels[invoice.payment_status] }}</td>
             </tr>
           </tbody>
         </table>

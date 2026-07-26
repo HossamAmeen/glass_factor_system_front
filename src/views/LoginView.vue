@@ -7,6 +7,7 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiLabel from '@/components/ui/UiLabel.vue'
 import { useAuthStore } from '@/stores/auth'
+import { APP_VERSION } from '@/version'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -65,6 +66,7 @@ async function onSubmit() {
         </UiButton>
       </form>
     </UiCard>
+    <p class="app-version" aria-label="إصدار التطبيق">{{ APP_VERSION }}</p>
   </section>
 </template>
 
@@ -80,5 +82,14 @@ async function onSubmit() {
 .submit {
   width: 100%;
   margin-top: 0.5rem;
+}
+
+.app-version {
+  margin: 0.85rem 0 0;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: hsl(var(--muted-foreground));
 }
 </style>
