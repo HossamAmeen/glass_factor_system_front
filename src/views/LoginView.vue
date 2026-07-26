@@ -2,6 +2,10 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import UiButton from '@/components/ui/UiButton.vue'
+import UiCard from '@/components/ui/UiCard.vue'
+import UiInput from '@/components/ui/UiInput.vue'
+import UiLabel from '@/components/ui/UiLabel.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -20,96 +24,61 @@ async function onSubmit() {
     await auth.login(form.username.trim(), form.password)
     await router.push({ name: 'clients' })
   } catch {
-    localError.value = auth.error ?? 'Login failed'
+    localError.value = auth.error ?? 'فشل تسجيل الدخول'
   }
 }
 </script>
 
 <template>
   <section class="login">
-    <h1>Glass Factor System</h1>
-    <p class="lede">Sign in with your username and password.</p>
+    <UiCard>
+      <template #title>لوحة التحكم</template>
+      <template #description>سجّل الدخول للوصول إلى لوحة المحترف</template>
 
-    <form class="card" @submit.prevent="onSubmit">
-      <label>
-        Username
-        <input v-model="form.username" type="text" autocomplete="username" required />
-      </label>
+      <form class="form" @submit.prevent="onSubmit">
+        <div class="ui-field">
+          <UiLabel html-for="username">اسم المستخدم</UiLabel>
+          <UiInput
+            id="username"
+            v-model="form.username"
+            type="text"
+            autocomplete="username"
+            required
+          />
+        </div>
 
-      <label>
-        Password
-        <input
-          v-model="form.password"
-          type="password"
-          autocomplete="current-password"
-          required
-        />
-      </label>
+        <div class="ui-field">
+          <UiLabel html-for="password">كلمة المرور</UiLabel>
+          <UiInput
+            id="password"
+            v-model="form.password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+        </div>
 
-      <p v-if="localError" class="error">{{ localError }}</p>
+        <p v-if="localError" class="ui-error">{{ localError }}</p>
 
-      <button type="submit" :disabled="auth.loading">
-        {{ auth.loading ? 'Signing in…' : 'Sign in' }}
-      </button>
-    </form>
+        <UiButton type="submit" :disabled="auth.loading" class="submit">
+          {{ auth.loading ? 'جارٍ الدخول…' : 'تسجيل الدخول' }}
+        </UiButton>
+      </form>
+    </UiCard>
   </section>
 </template>
 
 <style scoped>
 .login {
-  max-width: 420px;
-  margin: 3rem auto 0;
+  width: min(26rem, 100%);
 }
 
-h1 {
-  margin: 0 0 0.4rem;
-  font-size: 1.8rem;
+.form {
+  margin-top: 0.25rem;
 }
 
-.lede {
-  margin: 0 0 1.5rem;
-  color: var(--color-text);
-}
-
-.card {
-  display: grid;
-  gap: 1rem;
-  padding: 1.25rem;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-background-soft);
-}
-
-label {
-  display: grid;
-  gap: 0.4rem;
-  font-size: 0.95rem;
-}
-
-input {
-  padding: 0.55rem 0.7rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  color: var(--color-text);
-}
-
-button {
-  padding: 0.65rem 0.9rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  cursor: pointer;
-  font-weight: 600;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.error {
-  margin: 0;
-  color: #b42318;
+.submit {
+  width: 100%;
+  margin-top: 0.5rem;
 }
 </style>

@@ -3,14 +3,21 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
+import type { Client } from '@/api/clients'
+import UiButton from '@/components/ui/UiButton.vue'
+import UiCard from '@/components/ui/UiCard.vue'
+import UiDialog from '@/components/ui/UiDialog.vue'
+import UiInput from '@/components/ui/UiInput.vue'
+import UiLabel from '@/components/ui/UiLabel.vue'
+import UiTextarea from '@/components/ui/UiTextarea.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useClientsStore } from '@/stores/clients'
-import type { Client } from '@/api/clients'
 
 const auth = useAuthStore()
 const clients = useClientsStore()
 const router = useRouter()
 
+const dialogOpen = ref(false)
 const editingId = ref<number | null>(null)
 const formError = ref<string | null>(null)
 const saving = ref(false)
@@ -19,7 +26,6 @@ const form = reactive({
   name: '',
   phone: '',
   email: '',
-  address: '',
   note: '',
 })
 
@@ -28,19 +34,28 @@ function resetForm() {
   form.name = ''
   form.phone = ''
   form.email = ''
-  form.address = ''
   form.note = ''
   formError.value = null
 }
 
-function startEdit(client: Client) {
+function openCreate() {
+  resetForm()
+  dialogOpen.value = true
+}
+
+function openEdit(client: Client) {
   editingId.value = client.id
   form.name = client.name
   form.phone = client.phone
   form.email = client.email
-  form.address = client.address
   form.note = client.note
   formError.value = null
+  dialogOpen.value = true
+}
+
+function closeDialog() {
+  dialogOpen.value = false
+  resetForm()
 }
 
 async function handleAuthError(err: unknown) {
@@ -61,7 +76,7 @@ async function load() {
 async function onSubmit() {
   formError.value = null
   if (!form.name.trim() || !form.phone.trim()) {
-    formError.value = 'Name and phone are required.'
+    formError.value = 'الاسم ورقم الهاتف مطلوبان.'
     return
   }
 
@@ -69,7 +84,6 @@ async function onSubmit() {
     name: form.name.trim(),
     phone: form.phone.trim(),
     email: form.email.trim(),
-    address: form.address.trim(),
     note: form.note.trim(),
   }
 
@@ -80,28 +94,24 @@ async function onSubmit() {
     } else {
       await clients.create(payload)
     }
-    resetForm()
+    closeDialog()
     await clients.fetchAll()
   } catch (err) {
     await handleAuthError(err)
-    formError.value = err instanceof ApiError ? 'Could not save client.' : 'Save failed.'
+    formError.value = err instanceof ApiError ? 'تعذّر حفظ العميل.' : 'فشل الحفظ.'
   } finally {
     saving.value = false
   }
 }
 
 async function onDelete(client: Client) {
-  if (!confirm(`Delete client “${client.name}”?`)) return
+  if (!confirm(`حذف العميل «${client.name}»؟`)) return
   try {
     await clients.remove(client.id)
-    if (editingId.value === client.id) resetForm()
+    if (editingId.value === client.id) closeDialog()
   } catch (err) {
     await handleAuthError(err)
   }
-}
-
-async function onSearch() {
-  await load()
 }
 
 onMounted(() => {
@@ -110,203 +120,85 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="clients">
+  <section>
     <header class="page-header">
       <div>
-        <h1>Clients</h1>
-        <p>Manage client records (name, phone, optional email/address/note).</p>
+        <h1>العملاء</h1>
+        <p>إدارة قائمة العملاء</p>
       </div>
+      <UiButton @click="openCreate">عميل جديد</UiButton>
     </header>
 
-    <form class="toolbar" @submit.prevent="onSearch">
-      <input v-model="clients.search" type="search" placeholder="Search name, phone, email" />
-      <button type="submit">Search</button>
-      <button type="button" class="ghost" @click="clients.search = ''; load()">Clear</button>
-    </form>
+    <p v-if="clients.error" class="ui-error">{{ clients.error }}</p>
 
-    <p v-if="clients.error" class="error">{{ clients.error }}</p>
-    <p v-if="clients.loading">Loading…</p>
-
-    <div class="layout">
-      <form class="panel form" @submit.prevent="onSubmit">
-        <h2>{{ editingId ? `Edit #${editingId}` : 'New client' }}</h2>
-
-        <label>
-          Name *
-          <input v-model="form.name" type="text" required />
-        </label>
-        <label>
-          Phone *
-          <input v-model="form.phone" type="text" required />
-        </label>
-        <label>
-          Email
-          <input v-model="form.email" type="email" />
-        </label>
-        <label>
-          Address
-          <textarea v-model="form.address" rows="2" />
-        </label>
-        <label>
-          Note
-          <textarea v-model="form.note" rows="2" />
-        </label>
-
-        <p v-if="formError" class="error">{{ formError }}</p>
-
-        <div class="actions">
-          <button type="submit" :disabled="saving">
-            {{ saving ? 'Saving…' : editingId ? 'Update' : 'Create' }}
-          </button>
-          <button v-if="editingId" type="button" class="ghost" @click="resetForm">Cancel</button>
-        </div>
-      </form>
-
-      <div class="panel table-wrap">
-        <table>
+    <UiCard>
+      <div class="ui-table-wrap">
+        <table class="ui-table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Phone</th>
-              <th>Email</th>
-              <th></th>
+              <th>الاسم</th>
+              <th>الهاتف</th>
+              <th>البريد</th>
+              <th>ملاحظات</th>
+              <th>إجراءات</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!clients.loading && clients.items.length === 0">
-              <td colspan="5">No clients yet.</td>
+            <tr v-if="clients.loading">
+              <td colspan="5" class="ui-empty">جارٍ التحميل…</td>
+            </tr>
+            <tr v-else-if="clients.items.length === 0">
+              <td colspan="5" class="ui-empty">لا يوجد عملاء بعد.</td>
             </tr>
             <tr v-for="client in clients.items" :key="client.id">
-              <td>{{ client.id }}</td>
               <td>{{ client.name }}</td>
               <td>{{ client.phone }}</td>
               <td>{{ client.email || '—' }}</td>
-              <td class="row-actions">
-                <button type="button" class="ghost" @click="startEdit(client)">Edit</button>
-                <button type="button" class="danger" @click="onDelete(client)">Delete</button>
+              <td>{{ client.note || '—' }}</td>
+              <td>
+                <div class="row-actions">
+                  <UiButton variant="outline" size="sm" @click="openEdit(client)">تعديل</UiButton>
+                  <UiButton variant="destructive" size="sm" @click="onDelete(client)">حذف</UiButton>
+                </div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
+    </UiCard>
+
+    <UiDialog
+      v-model:open="dialogOpen"
+      :title="editingId ? 'تعديل عميل' : 'عميل جديد'"
+      description="أدخل بيانات العميل ثم احفظ."
+    >
+      <form @submit.prevent="onSubmit">
+        <div class="ui-field">
+          <UiLabel html-for="client-name">الاسم</UiLabel>
+          <UiInput id="client-name" v-model="form.name" required />
+        </div>
+        <div class="ui-field">
+          <UiLabel html-for="client-phone">رقم الهاتف</UiLabel>
+          <UiInput id="client-phone" v-model="form.phone" required />
+        </div>
+        <div class="ui-field">
+          <UiLabel html-for="client-email">البريد الإلكتروني</UiLabel>
+          <UiInput id="client-email" v-model="form.email" type="email" />
+        </div>
+        <div class="ui-field">
+          <UiLabel html-for="client-note">ملاحظات</UiLabel>
+          <UiTextarea id="client-note" v-model="form.note" :rows="3" />
+        </div>
+
+        <p v-if="formError" class="ui-error">{{ formError }}</p>
+
+        <div class="ui-dialog-footer">
+          <UiButton type="submit" :disabled="saving">
+            {{ saving ? 'جارٍ الحفظ…' : editingId ? 'تحديث' : 'حفظ' }}
+          </UiButton>
+          <UiButton type="button" variant="outline" @click="closeDialog">إلغاء</UiButton>
+        </div>
+      </form>
+    </UiDialog>
   </section>
 </template>
-
-<style scoped>
-.page-header {
-  margin-bottom: 1.25rem;
-}
-
-h1 {
-  margin: 0 0 0.35rem;
-}
-
-.page-header p {
-  margin: 0;
-  color: var(--color-text);
-}
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.layout {
-  display: grid;
-  gap: 1rem;
-}
-
-@media (min-width: 960px) {
-  .layout {
-    grid-template-columns: 320px 1fr;
-    align-items: start;
-  }
-}
-
-.panel {
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-background-soft);
-  padding: 1rem;
-}
-
-.form {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.form h2 {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-label {
-  display: grid;
-  gap: 0.35rem;
-  font-size: 0.92rem;
-}
-
-input,
-textarea {
-  padding: 0.5rem 0.65rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  color: var(--color-text);
-  font: inherit;
-}
-
-.actions,
-.row-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-button {
-  padding: 0.5rem 0.8rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  cursor: pointer;
-}
-
-button.ghost {
-  background: transparent;
-}
-
-button.danger {
-  color: #b42318;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.table-wrap {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.95rem;
-}
-
-th,
-td {
-  text-align: left;
-  padding: 0.55rem 0.4rem;
-  border-bottom: 1px solid var(--color-border);
-  vertical-align: top;
-}
-
-.error {
-  color: #b42318;
-}
-</style>

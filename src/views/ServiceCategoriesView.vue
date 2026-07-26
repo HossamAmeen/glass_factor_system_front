@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
 import type { ServiceCategory } from '@/api/serviceCategories'
+import UiButton from '@/components/ui/UiButton.vue'
+import UiCard from '@/components/ui/UiCard.vue'
+import UiDialog from '@/components/ui/UiDialog.vue'
+import UiInput from '@/components/ui/UiInput.vue'
+import UiLabel from '@/components/ui/UiLabel.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useServiceCategoriesStore } from '@/stores/serviceCategories'
+import { useServicesStore } from '@/stores/services'
 
 const auth = useAuthStore()
 const categories = useServiceCategoriesStore()
+const services = useServicesStore()
 const router = useRouter()
 
+const dialogOpen = ref(false)
 const editingId = ref<number | null>(null)
 const formError = ref<string | null>(null)
 const saving = ref(false)
@@ -19,16 +27,39 @@ const form = reactive({
   name: '',
 })
 
+const serviceCountByCategory = computed(() => {
+  const counts = new Map<number, number>()
+  for (const service of services.items) {
+    counts.set(service.service_category, (counts.get(service.service_category) ?? 0) + 1)
+  }
+  return counts
+})
+
+function servicesCount(categoryId: number) {
+  return serviceCountByCategory.value.get(categoryId) ?? 0
+}
+
 function resetForm() {
   editingId.value = null
   form.name = ''
   formError.value = null
 }
 
-function startEdit(category: ServiceCategory) {
+function openCreate() {
+  resetForm()
+  dialogOpen.value = true
+}
+
+function openEdit(category: ServiceCategory) {
   editingId.value = category.id
   form.name = category.name
   formError.value = null
+  dialogOpen.value = true
+}
+
+function closeDialog() {
+  dialogOpen.value = false
+  resetForm()
 }
 
 async function handleAuthError(err: unknown) {
@@ -40,7 +71,9 @@ async function handleAuthError(err: unknown) {
 
 async function load() {
   try {
-    await categories.fetchAll()
+    services.search = ''
+    services.categoryFilter = null
+    await Promise.all([categories.fetchAll(), services.fetchAll()])
   } catch (err) {
     await handleAuthError(err)
   }
@@ -49,7 +82,7 @@ async function load() {
 async function onSubmit() {
   formError.value = null
   if (!form.name.trim()) {
-    formError.value = 'Name is required.'
+    formError.value = 'الاسم مطلوب.'
     return
   }
 
@@ -62,28 +95,32 @@ async function onSubmit() {
     } else {
       await categories.create(payload)
     }
-    resetForm()
+    closeDialog()
     await categories.fetchAll()
   } catch (err) {
     await handleAuthError(err)
-    formError.value = err instanceof ApiError ? 'Could not save category.' : 'Save failed.'
+    formError.value = err instanceof ApiError ? 'تعذّر حفظ الخدمة الرئيسية.' : 'فشل الحفظ.'
   } finally {
     saving.value = false
   }
 }
 
 async function onDelete(category: ServiceCategory) {
-  if (!confirm(`Delete category “${category.name}”?`)) return
+  const count = servicesCount(category.id)
+  const message =
+    count > 0
+      ? `حذف الخدمة الرئيسية «${category.name}» سيؤدي أيضًا إلى حذف ${count} خدمة مرتبطة. هل تريد المتابعة؟`
+      : `حذف الخدمة الرئيسية «${category.name}»؟`
+
+  if (!confirm(message)) return
+
   try {
     await categories.remove(category.id)
-    if (editingId.value === category.id) resetForm()
+    await services.fetchAll()
+    if (editingId.value === category.id) closeDialog()
   } catch (err) {
     await handleAuthError(err)
   }
-}
-
-async function onSearch() {
-  await load()
 }
 
 onMounted(() => {
@@ -92,182 +129,69 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="categories">
+  <section>
     <header class="page-header">
       <div>
-        <h1>Service categories</h1>
-        <p>Group services by category name.</p>
+        <h1>الخدمات الرئيسية</h1>
+        <p>إدارة الأقسام الرئيسية وعدد الخدمات التابعة لها</p>
       </div>
+      <UiButton @click="openCreate">خدمة رئيسية</UiButton>
     </header>
 
-    <form class="toolbar" @submit.prevent="onSearch">
-      <input v-model="categories.search" type="search" placeholder="Search name" />
-      <button type="submit">Search</button>
-      <button type="button" class="ghost" @click="categories.search = ''; load()">Clear</button>
-    </form>
+    <p v-if="categories.error" class="ui-error">{{ categories.error }}</p>
 
-    <p v-if="categories.error" class="error">{{ categories.error }}</p>
-    <p v-if="categories.loading">Loading…</p>
-
-    <div class="layout">
-      <form class="panel form" @submit.prevent="onSubmit">
-        <h2>{{ editingId ? `Edit #${editingId}` : 'New category' }}</h2>
-
-        <label>
-          Name *
-          <input v-model="form.name" type="text" required />
-        </label>
-
-        <p v-if="formError" class="error">{{ formError }}</p>
-
-        <div class="actions">
-          <button type="submit" :disabled="saving">
-            {{ saving ? 'Saving…' : editingId ? 'Update' : 'Create' }}
-          </button>
-          <button v-if="editingId" type="button" class="ghost" @click="resetForm">Cancel</button>
-        </div>
-      </form>
-
-      <div class="panel table-wrap">
-        <table>
+    <UiCard>
+      <div class="ui-table-wrap">
+        <table class="ui-table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th></th>
+              <th>الاسم</th>
+              <th>عدد الخدمات</th>
+              <th>إجراءات</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!categories.loading && categories.items.length === 0">
-              <td colspan="3">No categories yet.</td>
+            <tr v-if="categories.loading">
+              <td colspan="3" class="ui-empty">جارٍ التحميل…</td>
+            </tr>
+            <tr v-else-if="categories.items.length === 0">
+              <td colspan="3" class="ui-empty">لا توجد خدمات رئيسية بعد.</td>
             </tr>
             <tr v-for="category in categories.items" :key="category.id">
-              <td>{{ category.id }}</td>
               <td>{{ category.name }}</td>
-              <td class="row-actions">
-                <button type="button" class="ghost" @click="startEdit(category)">Edit</button>
-                <button type="button" class="danger" @click="onDelete(category)">Delete</button>
+              <td>{{ servicesCount(category.id) }}</td>
+              <td>
+                <div class="row-actions">
+                  <UiButton variant="outline" size="sm" @click="openEdit(category)">تعديل</UiButton>
+                  <UiButton variant="destructive" size="sm" @click="onDelete(category)">حذف</UiButton>
+                </div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
+    </UiCard>
+
+    <UiDialog
+      v-model:open="dialogOpen"
+      :title="editingId ? 'تعديل خدمة رئيسية' : 'خدمة رئيسية جديدة'"
+      description="أدخل اسم الخدمة الرئيسية."
+    >
+      <form @submit.prevent="onSubmit">
+        <div class="ui-field">
+          <UiLabel html-for="category-name">الاسم</UiLabel>
+          <UiInput id="category-name" v-model="form.name" required />
+        </div>
+
+        <p v-if="formError" class="ui-error">{{ formError }}</p>
+
+        <div class="ui-dialog-footer">
+          <UiButton type="submit" :disabled="saving">
+            {{ saving ? 'جارٍ الحفظ…' : editingId ? 'تحديث' : 'حفظ' }}
+          </UiButton>
+          <UiButton type="button" variant="outline" @click="closeDialog">إلغاء</UiButton>
+        </div>
+      </form>
+    </UiDialog>
   </section>
 </template>
-
-<style scoped>
-.page-header {
-  margin-bottom: 1.25rem;
-}
-
-h1 {
-  margin: 0 0 0.35rem;
-}
-
-.page-header p {
-  margin: 0;
-  color: var(--color-text);
-}
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.layout {
-  display: grid;
-  gap: 1rem;
-}
-
-@media (min-width: 960px) {
-  .layout {
-    grid-template-columns: 320px 1fr;
-    align-items: start;
-  }
-}
-
-.panel {
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-background-soft);
-  padding: 1rem;
-}
-
-.form {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.form h2 {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-label {
-  display: grid;
-  gap: 0.35rem;
-  font-size: 0.92rem;
-}
-
-input {
-  padding: 0.5rem 0.65rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  color: var(--color-text);
-  font: inherit;
-}
-
-.actions,
-.row-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-button {
-  padding: 0.5rem 0.8rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  cursor: pointer;
-}
-
-button.ghost {
-  background: transparent;
-}
-
-button.danger {
-  color: #b42318;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.table-wrap {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.95rem;
-}
-
-th,
-td {
-  text-align: left;
-  padding: 0.55rem 0.4rem;
-  border-bottom: 1px solid var(--color-border);
-  vertical-align: top;
-}
-
-.error {
-  color: #b42318;
-}
-</style>

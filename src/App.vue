@@ -2,10 +2,17 @@
 import { RouterLink, RouterView } from 'vue-router'
 import { useRouter } from 'vue-router'
 
+import UiButton from '@/components/ui/UiButton.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
+
+const navItems = [
+  { name: 'clients', to: '/clients', label: 'العملاء' },
+  { name: 'service-categories', to: '/service-categories', label: 'الخدمات الرئيسية' },
+  { name: 'services', to: '/services', label: 'الخدمات' },
+] as const
 
 async function onLogout() {
   auth.logout()
@@ -14,16 +21,33 @@ async function onLogout() {
 </script>
 
 <template>
-  <div class="app-shell">
-    <header v-if="auth.isAuthenticated" class="topbar">
-      <RouterLink class="brand" to="/clients">Glass Factor System</RouterLink>
-      <nav>
-        <RouterLink to="/clients">Clients</RouterLink>
-        <RouterLink to="/service-categories">Categories</RouterLink>
-        <RouterLink to="/services">Services</RouterLink>
-        <button type="button" class="logout" @click="onLogout">Logout</button>
-      </nav>
-    </header>
+  <div class="app-shell" dir="rtl" :class="{ auth: auth.isAuthenticated }">
+    <aside v-if="auth.isAuthenticated" class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand">
+          <p class="brand-title">لوحة التحكم</p>
+          <p class="brand-subtitle">لوحة المحترف</p>
+        </div>
+
+        <nav class="nav" aria-label="التنقل الرئيسي">
+          <RouterLink
+            v-for="item in navItems"
+            :key="item.name"
+            :to="item.to"
+            class="nav-link"
+            exact-active-class="nav-link-active"
+          >
+            {{ item.label }}
+          </RouterLink>
+        </nav>
+      </div>
+
+      <div class="sidebar-bottom">
+        <UiButton variant="outline" class="logout-btn" @click="onLogout">
+          تسجيل الخروج
+        </UiButton>
+      </div>
+    </aside>
 
     <main class="content" :class="{ narrow: !auth.isAuthenticated }">
       <RouterView />
@@ -34,60 +58,137 @@ async function onLogout() {
 <style scoped>
 .app-shell {
   min-height: 100vh;
-  display: flex;
-  flex-direction: column;
 }
 
-.topbar {
+.app-shell.auth {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 40;
+  width: 16rem;
+  height: 100vh;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--color-border);
+  padding: 1.5rem 1rem;
+  background: hsl(var(--sidebar));
+  border-left: 1px solid hsl(var(--sidebar-border));
 }
 
 .brand {
-  font-weight: 700;
-  font-size: 1.05rem;
-  color: var(--color-heading);
-  text-decoration: none;
+  padding: 0.25rem 0.5rem 1.5rem;
+  border-bottom: 1px solid hsl(var(--border));
+  margin-bottom: 1rem;
 }
 
-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+.brand-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: hsl(var(--foreground));
 }
 
-nav a {
-  color: var(--color-text);
-  text-decoration: none;
-  padding: 0.35rem 0.6rem;
-  border-radius: 6px;
+.brand-subtitle {
+  margin: 0.15rem 0 0;
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
 }
 
-nav a.router-link-exact-active {
-  background: var(--color-background-soft);
-  color: var(--color-heading);
+.nav {
+  display: grid;
+  gap: 0.35rem;
 }
 
-.logout {
-  padding: 0.35rem 0.7rem;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
+.nav-link {
+  display: block;
+  padding: 0.65rem 0.85rem;
+  border-radius: calc(var(--radius) - 2px);
+  color: hsl(var(--muted-foreground));
+  font-weight: 600;
+  font-size: 0.925rem;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.nav-link:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.nav-link-active {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.nav-link-active:hover {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.sidebar-bottom {
+  padding-top: 1rem;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.logout-btn {
+  width: 100%;
 }
 
 .content {
-  flex: 1;
-  width: min(1100px, 100%);
-  margin: 0 auto;
+  min-height: 100vh;
   padding: 1.5rem;
 }
 
+.app-shell.auth .content {
+  margin-right: 16rem;
+  width: calc(100% - 16rem);
+  max-width: none;
+}
+
 .content.narrow {
-  width: min(520px, 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    position: sticky;
+    width: 100%;
+    height: auto;
+    border-left: none;
+    border-bottom: 1px solid hsl(var(--sidebar-border));
+  }
+
+  .sidebar-top {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .brand {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0.25rem;
+  }
+
+  .nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .sidebar-bottom {
+    margin-top: 0.75rem;
+  }
+
+  .app-shell.auth .content {
+    margin-right: 0;
+    width: 100%;
+  }
 }
 </style>
