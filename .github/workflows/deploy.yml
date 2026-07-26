@@ -3,6 +3,7 @@ name: Deploy Frontend
 on:
   push:
     branches: [main, master]
+  workflow_dispatch:
 
 concurrency:
   group: deploy-frontend
@@ -18,7 +19,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script_stop: true
+          command_timeout: 20m
           script: |
             set -euo pipefail
             /opt/karlop/deploy-frontend.sh "${{ github.ref_name }}"
