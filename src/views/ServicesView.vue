@@ -1,9 +1,15 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
-import type { Service } from '@/api/services'
+import type { CostMethod, Service } from '@/api/services'
+import UiButton from '@/components/ui/UiButton.vue'
+import UiCard from '@/components/ui/UiCard.vue'
+import UiDialog from '@/components/ui/UiDialog.vue'
+import UiInput from '@/components/ui/UiInput.vue'
+import UiLabel from '@/components/ui/UiLabel.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useServiceCategoriesStore } from '@/stores/serviceCategories'
 import { useServicesStore } from '@/stores/services'
@@ -13,6 +19,7 @@ const services = useServicesStore()
 const categories = useServiceCategoriesStore()
 const router = useRouter()
 
+const dialogOpen = ref(false)
 const editingId = ref<number | null>(null)
 const formError = ref<string | null>(null)
 const saving = ref(false)
@@ -21,28 +28,50 @@ const form = reactive({
   name: '',
   service_category: '' as string | number,
   cost: '',
+  cost_method: 'perimeter' as CostMethod,
   is_fixed_cost: false,
   is_additional_service: false,
 })
 
+const hasCategories = computed(() => categories.items.length > 0)
+
+const costMethodLabels: Record<CostMethod, string> = {
+  perimeter: 'المحيط',
+  area: 'المساحة',
+}
+
 function resetForm() {
   editingId.value = null
   form.name = ''
-  form.service_category = ''
+  form.service_category = categories.items[0]?.id ?? ''
   form.cost = ''
+  form.cost_method = 'perimeter'
   form.is_fixed_cost = false
   form.is_additional_service = false
   formError.value = null
 }
 
-function startEdit(service: Service) {
+function openCreate() {
+  if (!hasCategories.value) return
+  resetForm()
+  dialogOpen.value = true
+}
+
+function openEdit(service: Service) {
   editingId.value = service.id
   form.name = service.name
   form.service_category = service.service_category
   form.cost = service.cost
+  form.cost_method = service.cost_method
   form.is_fixed_cost = service.is_fixed_cost
   form.is_additional_service = service.is_additional_service
   formError.value = null
+  dialogOpen.value = true
+}
+
+function closeDialog() {
+  dialogOpen.value = false
+  resetForm()
 }
 
 async function handleAuthError(err: unknown) {
@@ -63,22 +92,27 @@ async function load() {
 async function onSubmit() {
   formError.value = null
   if (!form.name.trim()) {
-    formError.value = 'Name is required.'
+    formError.value = 'الاسم مطلوب.'
     return
   }
   if (form.service_category === '' || form.service_category == null) {
-    formError.value = 'Service category is required.'
+    formError.value = 'الخدمة الرئيسية مطلوبة.'
     return
   }
-  if (!form.cost.trim()) {
-    formError.value = 'Cost is required.'
+  if (!String(form.cost).trim()) {
+    formError.value = 'السعر مطلوب.'
+    return
+  }
+  if (form.cost_method !== 'perimeter' && form.cost_method !== 'area') {
+    formError.value = 'طريقة حساب السعر مطلوبة.'
     return
   }
 
   const payload = {
     name: form.name.trim(),
     service_category: Number(form.service_category),
-    cost: form.cost.trim(),
+    cost: String(form.cost).trim(),
+    cost_method: form.cost_method,
     is_fixed_cost: form.is_fixed_cost,
     is_additional_service: form.is_additional_service,
   }
@@ -90,32 +124,30 @@ async function onSubmit() {
     } else {
       await services.create(payload)
     }
-    resetForm()
+    closeDialog()
     await services.fetchAll()
   } catch (err) {
     await handleAuthError(err)
-    formError.value = err instanceof ApiError ? 'Could not save service.' : 'Save failed.'
+    formError.value = err instanceof ApiError ? 'تعذّر حفظ الخدمة.' : 'فشل الحفظ.'
   } finally {
     saving.value = false
   }
 }
 
 async function onDelete(service: Service) {
-  if (!confirm(`Delete service “${service.name}”?`)) return
+  if (!confirm(`حذف الخدمة «${service.name}»؟`)) return
   try {
     await services.remove(service.id)
-    if (editingId.value === service.id) resetForm()
+    if (editingId.value === service.id) closeDialog()
   } catch (err) {
     await handleAuthError(err)
   }
 }
 
-async function onSearch() {
-  try {
-    await services.fetchAll()
-  } catch (err) {
-    await handleAuthError(err)
-  }
+function formatPrice(value: string) {
+  const number = Number(value)
+  if (Number.isNaN(number)) return value
+  return number.toLocaleString('ar-EG')
 }
 
 onMounted(() => {
@@ -124,234 +156,143 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="services">
+  <section>
     <header class="page-header">
       <div>
-        <h1>Services</h1>
-        <p>Manage services with category, cost, and cost flags.</p>
+        <h1>الخدمات</h1>
+        <p>الخدمات التابعة للأقسام الرئيسية</p>
       </div>
+      <UiButton :disabled="!hasCategories" @click="openCreate">خدمة جديدة</UiButton>
     </header>
 
-    <form class="toolbar" @submit.prevent="onSearch">
-      <input v-model="services.search" type="search" placeholder="Search name or category" />
-      <select v-model="services.categoryFilter">
-        <option :value="null">All categories</option>
-        <option v-for="category in categories.items" :key="category.id" :value="category.id">
-          {{ category.name }}
-        </option>
-      </select>
-      <button type="submit">Search</button>
-      <button
-        type="button"
-        class="ghost"
-        @click="
-          services.search = '';
-          services.categoryFilter = null;
-          onSearch()
-        "
-      >
-        Clear
-      </button>
-    </form>
+    <p v-if="!categories.loading && !hasCategories" class="notice">
+      أضف خدمة رئيسية أولًا من صفحة الخدمات الرئيسية.
+    </p>
 
-    <p v-if="services.error" class="error">{{ services.error }}</p>
-    <p v-if="services.loading">Loading…</p>
+    <p v-if="services.error" class="ui-error">{{ services.error }}</p>
 
-    <div class="layout">
-      <form class="panel form" @submit.prevent="onSubmit">
-        <h2>{{ editingId ? `Edit #${editingId}` : 'New service' }}</h2>
-
-        <label>
-          Name *
-          <input v-model="form.name" type="text" required />
-        </label>
-        <label>
-          Service category *
-          <select v-model="form.service_category" required>
-            <option disabled value="">Select category</option>
-            <option v-for="category in categories.items" :key="category.id" :value="category.id">
-              {{ category.name }}
-            </option>
-          </select>
-        </label>
-        <label>
-          Cost *
-          <input v-model="form.cost" type="number" min="0" step="0.01" required />
-        </label>
-        <label class="checkbox">
-          <input v-model="form.is_fixed_cost" type="checkbox" />
-          Fixed cost
-        </label>
-        <label class="checkbox">
-          <input v-model="form.is_additional_service" type="checkbox" />
-          Additional service
-        </label>
-
-        <p v-if="formError" class="error">{{ formError }}</p>
-
-        <div class="actions">
-          <button type="submit" :disabled="saving">
-            {{ saving ? 'Saving…' : editingId ? 'Update' : 'Create' }}
-          </button>
-          <button v-if="editingId" type="button" class="ghost" @click="resetForm">Cancel</button>
-        </div>
-      </form>
-
-      <div class="panel table-wrap">
-        <table>
+    <UiCard>
+      <div class="ui-table-wrap">
+        <table class="ui-table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Cost</th>
-              <th>Fixed</th>
-              <th>Additional</th>
-              <th></th>
+              <th>الاسم</th>
+              <th>الخدمة الرئيسية</th>
+              <th>السعر</th>
+              <th>طريقة الحساب</th>
+              <th>سعر ثابت</th>
+              <th>خدمة إضافية</th>
+              <th>إجراءات</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!services.loading && services.items.length === 0">
-              <td colspan="7">No services yet.</td>
+            <tr v-if="services.loading">
+              <td colspan="7" class="ui-empty">جارٍ التحميل…</td>
+            </tr>
+            <tr v-else-if="services.items.length === 0">
+              <td colspan="7" class="ui-empty">
+                {{
+                  hasCategories
+                    ? 'لا توجد خدمات بعد.'
+                    : 'أضف خدمة رئيسية أولًا من صفحة الخدمات الرئيسية.'
+                }}
+              </td>
             </tr>
             <tr v-for="service in services.items" :key="service.id">
-              <td>{{ service.id }}</td>
               <td>{{ service.name }}</td>
               <td>{{ service.service_category_name }}</td>
-              <td>{{ service.cost }}</td>
-              <td>{{ service.is_fixed_cost ? 'Yes' : 'No' }}</td>
-              <td>{{ service.is_additional_service ? 'Yes' : 'No' }}</td>
-              <td class="row-actions">
-                <button type="button" class="ghost" @click="startEdit(service)">Edit</button>
-                <button type="button" class="danger" @click="onDelete(service)">Delete</button>
+              <td>{{ formatPrice(service.cost) }}</td>
+              <td>{{ costMethodLabels[service.cost_method] }}</td>
+              <td>{{ service.is_fixed_cost ? 'نعم' : 'لا' }}</td>
+              <td>{{ service.is_additional_service ? 'نعم' : 'لا' }}</td>
+              <td>
+                <div class="row-actions">
+                  <UiButton variant="outline" size="sm" @click="openEdit(service)">تعديل</UiButton>
+                  <UiButton variant="destructive" size="sm" @click="onDelete(service)">حذف</UiButton>
+                </div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
+    </UiCard>
+
+    <UiDialog
+      v-model:open="dialogOpen"
+      :title="editingId ? 'تعديل خدمة' : 'خدمة جديدة'"
+      description="أدخل بيانات الخدمة ثم احفظ."
+    >
+      <form @submit.prevent="onSubmit">
+        <div class="ui-field">
+          <UiLabel html-for="service-name">الاسم</UiLabel>
+          <UiInput id="service-name" v-model="form.name" required />
+        </div>
+        <div class="ui-field">
+          <UiLabel html-for="service-category">الخدمة الرئيسية</UiLabel>
+          <UiSelect id="service-category" v-model="form.service_category" required>
+            <option disabled value="">اختر الخدمة الرئيسية</option>
+            <option v-for="category in categories.items" :key="category.id" :value="category.id">
+              {{ category.name }}
+            </option>
+          </UiSelect>
+        </div>
+        <div class="ui-field">
+          <UiLabel html-for="service-cost">السعر</UiLabel>
+          <UiInput id="service-cost" v-model="form.cost" type="number" min="0" step="0.01" required />
+        </div>
+        <div class="ui-field">
+          <UiLabel html-for="service-cost-method">طريقة حساب السعر</UiLabel>
+          <UiSelect id="service-cost-method" v-model="form.cost_method" required>
+            <option value="perimeter">المحيط</option>
+            <option value="area">المساحة</option>
+          </UiSelect>
+        </div>
+        <label class="checkbox-field">
+          <input v-model="form.is_fixed_cost" type="checkbox" />
+          سعر ثابت
+        </label>
+        <label class="checkbox-field">
+          <input v-model="form.is_additional_service" type="checkbox" />
+          خدمة إضافية
+        </label>
+
+        <p v-if="formError" class="ui-error">{{ formError }}</p>
+
+        <div class="ui-dialog-footer">
+          <UiButton type="submit" :disabled="saving">
+            {{ saving ? 'جارٍ الحفظ…' : editingId ? 'تحديث' : 'حفظ' }}
+          </UiButton>
+          <UiButton type="button" variant="outline" @click="closeDialog">إلغاء</UiButton>
+        </div>
+      </form>
+    </UiDialog>
   </section>
 </template>
 
 <style scoped>
-.page-header {
-  margin-bottom: 1.25rem;
+.notice {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.925rem;
 }
 
-h1 {
-  margin: 0 0 0.35rem;
-}
-
-.page-header p {
-  margin: 0;
-  color: var(--color-text);
-}
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.layout {
-  display: grid;
-  gap: 1rem;
-}
-
-@media (min-width: 960px) {
-  .layout {
-    grid-template-columns: 320px 1fr;
-    align-items: start;
-  }
-}
-
-.panel {
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-background-soft);
-  padding: 1rem;
-}
-
-.form {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.form h2 {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-label {
-  display: grid;
-  gap: 0.35rem;
-  font-size: 0.92rem;
-}
-
-label.checkbox {
+.checkbox-field {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-}
-
-input,
-select {
-  padding: 0.5rem 0.65rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
-  color: var(--color-text);
-  font: inherit;
-}
-
-.actions,
-.row-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-button {
-  padding: 0.5rem 0.8rem;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-background);
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.925rem;
+  color: hsl(var(--foreground));
   cursor: pointer;
 }
 
-button.ghost {
-  background: transparent;
-}
-
-button.danger {
-  color: #b42318;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.table-wrap {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.95rem;
-}
-
-th,
-td {
-  text-align: left;
-  padding: 0.55rem 0.4rem;
-  border-bottom: 1px solid var(--color-border);
-  vertical-align: top;
-}
-
-.error {
-  color: #b42318;
+.checkbox-field input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: hsl(var(--primary));
 }
 </style>

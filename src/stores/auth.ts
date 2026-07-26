@@ -20,7 +20,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (err) {
       accessToken.value = null
       clearTokens()
-      error.value = 'Invalid username or password'
+      error.value = 'اسم المستخدم أو كلمة المرور غير صحيحة'
       throw err
     } finally {
       loading.value = false

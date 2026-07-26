@@ -1,11 +1,14 @@
 import { apiFetch } from './client'
 
+export type CostMethod = 'perimeter' | 'area'
+
 export interface Service {
   id: number
   name: string
   service_category: number
   service_category_name: string
   cost: string
+  cost_method: CostMethod
   is_fixed_cost: boolean
   is_additional_service: boolean
   created_at: string
@@ -19,6 +22,7 @@ export interface ServicePayload {
   name: string
   service_category: number
   cost: string
+  cost_method: CostMethod
   is_fixed_cost: boolean
   is_additional_service: boolean
 }
@@ -34,6 +38,7 @@ export function listServices(
   params: {
     search?: string
     service_category?: number
+    cost_method?: CostMethod
     limit?: number
     offset?: number
   } = {},
@@ -43,6 +48,7 @@ export function listServices(
   if (params.service_category != null) {
     query.set('service_category', String(params.service_category))
   }
+  if (params.cost_method) query.set('cost_method', params.cost_method)
   query.set('limit', String(params.limit ?? 100))
   query.set('offset', String(params.offset ?? 0))
   const qs = query.toString()
