@@ -12,6 +12,7 @@ const navItems = [
   { name: 'clients', to: '/clients', label: 'العملاء' },
   { name: 'service-categories', to: '/service-categories', label: 'الخدمات الرئيسية' },
   { name: 'services', to: '/services', label: 'الخدمات' },
+  { name: 'invoices', to: '/invoices', label: 'الفواتير' },
 ] as const
 
 async function onLogout() {
