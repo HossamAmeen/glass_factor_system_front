@@ -8,6 +8,8 @@ import InvoicesView from '@/views/InvoicesView.vue'
 import LoginView from '@/views/LoginView.vue'
 import ServiceCategoriesView from '@/views/ServiceCategoriesView.vue'
 import ServicesView from '@/views/ServicesView.vue'
+import ExpensesView from '@/views/ExpensesView.vue'
+import ExpenseServiceCategoriesView from '@/views/ExpenseServiceCategoriesView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -58,6 +60,16 @@ const router = createRouter({
       name: 'invoice-edit',
       component: InvoiceEditorView,
       props: true,
+    },
+    {
+      path: '/expenses',
+      name: 'expenses',
+      component: ExpensesView,
+    },
+    {
+      path: '/expense-service-categories',
+      name: 'expense-service-categories',
+      component: ExpenseServiceCategoriesView,
     },
   ],
 })
