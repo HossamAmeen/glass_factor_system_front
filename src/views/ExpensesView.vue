@@ -131,11 +131,11 @@ async function onSubmit() {
     closeDialog()
   } catch (err) {
     await handleAuthError(err)
-    if (err instanceof ApiError && err.data) {
-        formError.value = Object.values(err.data).join(' ')
-    } else {
-        formError.value = 'فشل الحفظ.'
-    }
+      if (err instanceof ApiError) {
+          formError.value = err.message
+      } else {
+          formError.value = 'فشل الحفظ.'
+      }
   } finally {
     saving.value = false
   }
@@ -309,7 +309,7 @@ onMounted(() => {
           <UiLabel html-for="expense-service-category">قسم الخدمات</UiLabel>
           <UiSelect id="expense-service-category" v-model="form.service_category" required>
             <option :value="null" disabled>اختر القسم</option>
-            <option v-for="cat in categoriesStore.items" :key="cat.id" :value="cat.id">
+            <option v-for="cat in serviceCategoriesStore.items" :key="cat.id" :value="cat.id">
               {{ cat.name }}
             </option>
           </UiSelect>
@@ -317,7 +317,7 @@ onMounted(() => {
 
         <div class="ui-field">
           <UiLabel html-for="expense-desc">الوصف</UiLabel>
-          <UiTextarea id="expense-desc" v-model="form.description" required rows="3"></UiTextarea>
+          <UiTextarea id="expense-desc" v-model="form.description" required :rows="3"></UiTextarea>
         </div>
 
         <p v-if="formError" class="ui-error">{{ formError }}</p>
