@@ -31,6 +31,7 @@ const form = reactive({
   cost_method: 'perimeter' as CostMethod,
   is_fixed_cost: false,
   is_additional_service: false,
+  color: '#3b82f6',
 })
 
 const hasCategories = computed(() => categories.items.length > 0)
@@ -50,6 +51,7 @@ function resetForm() {
   form.cost_method = 'perimeter'
   form.is_fixed_cost = false
   form.is_additional_service = false
+  form.color = '#3b82f6'
   formError.value = null
 }
 
@@ -67,6 +69,7 @@ function openEdit(service: Service) {
   form.cost_method = service.cost_method
   form.is_fixed_cost = service.is_fixed_cost
   form.is_additional_service = service.is_additional_service
+  form.color = service.color
   formError.value = null
   dialogOpen.value = true
 }
@@ -117,6 +120,7 @@ async function onSubmit() {
     cost_method: form.cost_method,
     is_fixed_cost: form.is_fixed_cost,
     is_additional_service: form.is_additional_service,
+    color: form.color,
   }
 
   saving.value = true
@@ -178,6 +182,7 @@ onMounted(() => {
         <table class="ui-table">
           <thead>
             <tr>
+              <th>اللون</th>
               <th>الاسم</th>
               <th>الخدمة الرئيسية</th>
               <th>السعر</th>
@@ -189,10 +194,10 @@ onMounted(() => {
           </thead>
           <tbody>
             <tr v-if="services.loading">
-              <td colspan="7" class="ui-empty">جارٍ التحميل…</td>
+              <td colspan="8" class="ui-empty">جارٍ التحميل…</td>
             </tr>
             <tr v-else-if="services.items.length === 0">
-              <td colspan="7" class="ui-empty">
+              <td colspan="8" class="ui-empty">
                 {{
                   hasCategories
                     ? 'لا توجد خدمات بعد.'
@@ -201,6 +206,13 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-for="service in services.items" :key="service.id">
+              <td>
+                <div
+                  class="color-swatch"
+                  :style="{ backgroundColor: service.color }"
+                  :title="service.color"
+                ></div>
+              </td>
               <td>{{ service.name }}</td>
               <td>{{ service.service_category_name }}</td>
               <td>{{ formatPrice(service.cost) }}</td>
@@ -251,6 +263,18 @@ onMounted(() => {
             <option value="area">المساحة</option>
           </UiSelect>
         </div>
+        <div class="ui-field color-field">
+          <UiLabel html-for="service-color">اللون</UiLabel>
+          <div class="color-picker-wrap">
+            <input
+              id="service-color"
+              v-model="form.color"
+              type="color"
+              class="color-picker-input"
+            />
+            <UiInput v-model="form.color" type="text" maxlength="7" class="color-text-input" />
+          </div>
+        </div>
         <label class="checkbox-field">
           <input v-model="form.is_fixed_cost" type="checkbox" />
           سعر ثابت
@@ -298,5 +322,42 @@ onMounted(() => {
   width: 1rem;
   height: 1rem;
   accent-color: hsl(var(--primary));
+}
+
+.color-swatch {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  cursor: pointer;
+}
+
+.color-picker-wrap {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.color-picker-input {
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  cursor: pointer;
+  padding: 0;
+}
+
+.color-picker-input::-webkit-color-swatch-wrapper {
+  padding: 0.125rem;
+}
+
+.color-picker-input::-webkit-color-swatch {
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.color-text-input {
+  flex: 1;
 }
 </style>

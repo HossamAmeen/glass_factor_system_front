@@ -9,6 +9,7 @@ export interface InvoiceItem {
   id: number
   service: number
   service_name: string
+  service_color: string
   cost_method: CostMethod
   unit_price: string
   quantity: string | null

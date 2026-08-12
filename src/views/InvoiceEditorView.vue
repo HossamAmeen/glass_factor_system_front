@@ -402,15 +402,21 @@ watch(
 
         <div class="items">
           <article v-for="item in invoice.items" :key="item.id" class="item-card">
-            <div>
-              <strong>{{ item.service_name }}</strong>
-              <p class="muted">
-                {{ costMethodLabels[item.cost_method] }} · سعر {{ item.unit_price }}
-                <template v-if="item.quantity"> · كمية {{ item.quantity }}</template>
-                <template v-if="item.length != null">
-                  · {{ item.length }}×{{ item.width }}
-                </template>
-              </p>
+            <div class="item-info">
+              <div
+                class="item-color-swatch"
+                :style="{ backgroundColor: item.service_color }"
+              ></div>
+              <div>
+                <strong>{{ item.service_name }}</strong>
+                <p class="muted">
+                  {{ costMethodLabels[item.cost_method] }} · سعر {{ item.unit_price }}
+                  <template v-if="item.quantity"> · كمية {{ item.quantity }}</template>
+                  <template v-if="item.length != null">
+                    · {{ item.length }}×{{ item.width }}
+                  </template>
+                </p>
+              </div>
             </div>
             <div class="item-total">
               <span>{{ item.line_total }}</span>
@@ -620,6 +626,19 @@ watch(
   gap: 1rem;
   padding: 0.85rem 0;
   border-bottom: 1px solid hsl(var(--border));
+}
+.item-info {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+.item-color-swatch {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--border));
+  flex-shrink: 0;
+  margin-top: 0.1rem;
 }
 .item-total {
   display: grid;

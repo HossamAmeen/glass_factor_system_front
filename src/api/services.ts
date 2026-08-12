@@ -11,6 +11,7 @@ export interface Service {
   cost_method: CostMethod
   is_fixed_cost: boolean
   is_additional_service: boolean
+  color: string
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -25,6 +26,7 @@ export interface ServicePayload {
   cost_method: CostMethod
   is_fixed_cost: boolean
   is_additional_service: boolean
+  color: string
 }
 
 export interface PaginatedServices {
