@@ -37,6 +37,7 @@ export interface Invoice {
   amount_paid: string
   amount_remaining: string
   payment_status: PaymentStatus
+  is_settled: boolean
   confirmed_at: string | null
   cancelled_at: string | null
   items: InvoiceItem[]

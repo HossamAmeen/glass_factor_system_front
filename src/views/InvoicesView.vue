@@ -118,7 +118,14 @@ onMounted(load)
               <td>{{ invoice.total }}</td>
               <td>{{ invoice.amount_paid }}</td>
               <td>{{ invoice.amount_remaining }}</td>
-              <td>{{ paymentLabels[invoice.payment_status] }}</td>
+              <td>
+                <div class="payment-cell">
+                  <span>{{ paymentLabels[invoice.payment_status] }}</span>
+                  <span v-if="invoice.is_settled" class="settled-badge" title="تمت التسوية">
+                    ✓
+                  </span>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -200,5 +207,22 @@ td {
 }
 .empty {
   padding: 1rem 0;
+}
+.payment-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.settled-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  background: hsl(142 60% 45%);
+  color: white;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: bold;
 }
 </style>
