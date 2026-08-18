@@ -15,7 +15,6 @@ const navItems = [
   { name: 'services', to: '/services', label: 'الخدمات' },
   { name: 'invoices', to: '/invoices', label: 'الفواتير' },
   { name: 'expenses', to: '/expenses', label: 'المصروفات' },
-  { name: 'expense-service-categories', to: '/expense-service-categories', label: 'أقسام المصروفات' },
 ] as const
 
 async function onLogout() {
