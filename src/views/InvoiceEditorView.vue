@@ -49,9 +49,9 @@ const itemForm = reactive({
   service: '' as string | number,
   unit_price: '',
   quantity: '',
-  area: '',
   length: '',
   width: '',
+  perimeter: '',
   discount_amount: '0',
 })
 
@@ -133,9 +133,9 @@ function resetItemForm() {
   itemForm.service = ''
   itemForm.unit_price = ''
   itemForm.quantity = ''
-  itemForm.area = ''
   itemForm.length = ''
   itemForm.width = ''
+  itemForm.perimeter = ''
   itemForm.discount_amount = '0'
   itemError.value = null
 }
@@ -145,22 +145,22 @@ function onServiceChange() {
   if (!service) return
   itemForm.unit_price = service.cost
   itemForm.category = service.service_category
-  if (service.is_fixed_cost) {
+  if (isFixedCost(service)) {
     itemForm.quantity = ''
-    itemForm.area = ''
     itemForm.length = ''
     itemForm.width = ''
+    itemForm.perimeter = ''
     return
   }
   if (!needsQuantity(service.cost_method)) {
     itemForm.quantity = ''
   }
   if (!needsArea(service.cost_method)) {
-    itemForm.area = ''
-  }
-  if (!needsPerimeterDims(service.cost_method)) {
     itemForm.length = ''
     itemForm.width = ''
+  }
+  if (!needsPerimeter(service.cost_method)) {
+    itemForm.perimeter = ''
   }
 }
 
@@ -230,8 +230,12 @@ function needsQuantity(method?: CostMethod) {
 function needsArea(method?: CostMethod) {
   return method === 'area'
 }
-function needsPerimeterDims(method?: CostMethod) {
+function needsPerimeter(method?: CostMethod) {
   return method === 'perimeter'
+}
+
+function isFixedCost(service: Service) {
+  return service.cost_method === 'fixed' || service.is_fixed_cost
 }
 
 async function addItem() {
@@ -250,25 +254,34 @@ async function addItem() {
     itemError.value = 'الكمية مطلوبة.'
     return
   }
-  if (needsArea(service.cost_method) && !itemForm.area) {
-    itemError.value = 'المساحة مطلوبة.'
+  if (needsArea(service.cost_method) && (!itemForm.length || !itemForm.width)) {
+    itemError.value = 'الطول والعرض مطلوبان.'
     return
   }
-  if (needsPerimeterDims(service.cost_method) && (!itemForm.length || !itemForm.width)) {
-    itemError.value = 'الطول والعرض مطلوبان.'
+  if (needsPerimeter(service.cost_method) && !itemForm.perimeter) {
+    itemError.value = 'القياس مطلوب.'
     return
   }
 
   savingItem.value = true
   try {
+    const isArea = needsArea(service.cost_method)
+    const isPerimeter = needsPerimeter(service.cost_method)
+    const perimeterValue = itemForm.perimeter || undefined
     await invoices.addItem(invoice.value.id, {
       service: service.id,
       unit_price: itemForm.unit_price,
       quantity: itemForm.quantity || undefined,
-      length: needsArea(service.cost_method)
-        ? itemForm.area || undefined
-        : itemForm.length || undefined,
-      width: needsArea(service.cost_method) ? '1' : itemForm.width || undefined,
+      length: isArea
+        ? itemForm.length || undefined
+        : isPerimeter
+          ? perimeterValue
+          : undefined,
+      width: isArea
+        ? itemForm.width || undefined
+        : isPerimeter
+          ? perimeterValue
+          : undefined,
       discount_amount: itemForm.discount_amount || '0',
     })
     resetItemForm()
@@ -466,10 +479,13 @@ watch(
                 <p class="muted">
                   {{ costMethodLabels[item.cost_method] }} · سعر {{ item.unit_price }}
                   <template v-if="item.quantity"> · كمية {{ item.quantity }}</template>
-                  <template v-if="item.cost_method === 'area' && item.length != null">
+                  <template v-if="item.cost_method === 'area' && item.length != null && item.width != null">
                     · مساحة {{ Number(item.length) * Number(item.width) }}
                   </template>
-                  <template v-else-if="item.length != null">
+                  <template v-else-if="item.cost_method === 'perimeter' && item.length != null">
+                    · محيط {{ item.length }}
+                  </template>
+                  <template v-else-if="item.length != null && item.width != null">
                     · {{ item.length }}×{{ item.width }}
                   </template>
                 </p>
@@ -511,8 +527,8 @@ watch(
                 </option>
               </UiSelect>
               <p v-if="selectedService" class="service-meta">
-                <span class="pill" :data-fixed="selectedService.is_fixed_cost">
-                  {{ selectedService.is_fixed_cost ? 'سعر ثابت' : 'سعر غير ثابت' }}
+                <span class="pill" :data-fixed="isFixedCost(selectedService)">
+                  {{ isFixedCost(selectedService) ? 'سعر ثابت' : 'سعر غير ثابت' }}
                 </span>
               </p>
             </div>
@@ -530,13 +546,7 @@ watch(
                 <UiInput v-model="itemForm.discount_amount" type="number" min="0" step="0.01" />
               </div>
             </div>
-            <template v-if="selectedService && !selectedService.is_fixed_cost && needsArea(selectedService.cost_method)">
-              <div class="full">
-                <UiLabel>المساحة</UiLabel>
-                <UiInput v-model="itemForm.area" type="number" min="0" step="0.001" />
-              </div>
-            </template>
-            <template v-if="selectedService && !selectedService.is_fixed_cost && needsPerimeterDims(selectedService.cost_method)">
+            <template v-if="selectedService && needsArea(selectedService.cost_method)">
               <div class="field-pair full">
                 <div>
                   <UiLabel>الطول</UiLabel>
@@ -546,6 +556,12 @@ watch(
                   <UiLabel>العرض</UiLabel>
                   <UiInput v-model="itemForm.width" type="number" min="0" step="0.001" />
                 </div>
+              </div>
+            </template>
+            <template v-if="selectedService && needsPerimeter(selectedService.cost_method)">
+              <div class="full">
+                <UiLabel>المحيط</UiLabel>
+                <UiInput v-model="itemForm.perimeter" type="number" min="0" step="0.001" />
               </div>
             </template>
           </div>
