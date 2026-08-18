@@ -6,12 +6,14 @@ const REFRESH_TOKEN_KEY = 'gfs_refresh_token'
 export class ApiError extends Error {
   readonly status: number
   readonly body: unknown
+  readonly url: string
 
-  constructor(message: string, status: number, body: unknown) {
+  constructor(message: string, status: number, body: unknown, url: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.body = body
+    this.url = url
   }
 }
 
@@ -61,7 +63,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     : await response.text()
 
   if (!response.ok) {
-    throw new ApiError(`Request failed: ${response.status}`, response.status, body)
+    throw new ApiError(`Request failed: ${response.status}`, response.status, body, url)
   }
 
   return body as T

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { login as loginRequest } from '@/api/auth'
-import { clearTokens, getAccessToken } from '@/api/client'
+import { ApiError, clearTokens, getAccessToken } from '@/api/client'
 
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(getAccessToken())
@@ -20,7 +20,11 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (err) {
       accessToken.value = null
       clearTokens()
-      error.value = 'اسم المستخدم أو كلمة المرور غير صحيحة'
+      if (err instanceof ApiError && err.status === 500) {
+        error.value = `حدث خطا مع الاتصال بالسيرفر\n${err.url}`
+      } else {
+        error.value = 'اسم المستخدم أو كلمة المرور غير صحيحة'
+      }
       throw err
     } finally {
       loading.value = false

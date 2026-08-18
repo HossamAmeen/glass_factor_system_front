@@ -56,7 +56,7 @@ async function onSubmit() {
             type="password"
             autocomplete="current-password"
             required
-          />
+      />
         </div>
 
         <p v-if="localError" class="ui-error">{{ localError }}</p>
@@ -82,6 +82,10 @@ async function onSubmit() {
 .submit {
   width: 100%;
   margin-top: 0.5rem;
+}
+
+.ui-error {
+  white-space: pre-line;
 }
 
 .app-version {

@@ -32,6 +32,7 @@ const itemError = ref<string | null>(null)
 const savingHeader = ref(false)
 const savingItem = ref(false)
 const acting = ref(false)
+const confirmMode = ref<'completed' | 'without_paid' | 'partial'>('completed')
 const payAmount = ref('')
 const payNotes = ref('')
 const payError = ref<string | null>(null)
@@ -48,6 +49,7 @@ const itemForm = reactive({
   service: '' as string | number,
   unit_price: '',
   quantity: '',
+  area: '',
   length: '',
   width: '',
   discount_amount: '0',
@@ -86,16 +88,27 @@ const paymentLabels = {
   paid: 'مدفوعة بالكامل',
 } as const
 
-function setFullPayment() {
-  if (invoice.value) payAmount.value = invoice.value.total
-}
-
-function setNoPayment() {
-  payAmount.value = '0'
-}
-
 function setRemainingPayment() {
   if (invoice.value) payAmount.value = invoice.value.amount_remaining
+}
+
+function setConfirmMode(mode: 'completed' | 'without_paid' | 'partial') {
+  confirmMode.value = mode
+}
+
+function syncConfirmAmount(mode: 'completed' | 'without_paid' | 'partial') {
+  if (!invoice.value) return
+  if (mode === 'completed') {
+    payAmount.value = invoice.value.total
+    return
+  }
+  if (mode === 'without_paid') {
+    payAmount.value = '0.00'
+    return
+  }
+  if (!payAmount.value || payAmount.value === '0.00' || payAmount.value === invoice.value.total) {
+    payAmount.value = invoice.value.amount_remaining
+  }
 }
 
 async function handleAuthError(err: unknown) {
@@ -120,6 +133,7 @@ function resetItemForm() {
   itemForm.service = ''
   itemForm.unit_price = ''
   itemForm.quantity = ''
+  itemForm.area = ''
   itemForm.length = ''
   itemForm.width = ''
   itemForm.discount_amount = '0'
@@ -131,12 +145,33 @@ function onServiceChange() {
   if (!service) return
   itemForm.unit_price = service.cost
   itemForm.category = service.service_category
+  if (service.is_fixed_cost) {
+    itemForm.quantity = ''
+    itemForm.area = ''
+    itemForm.length = ''
+    itemForm.width = ''
+    return
+  }
+  if (!needsQuantity(service.cost_method)) {
+    itemForm.quantity = ''
+  }
+  if (!needsArea(service.cost_method)) {
+    itemForm.area = ''
+  }
+  if (!needsPerimeterDims(service.cost_method)) {
+    itemForm.length = ''
+    itemForm.width = ''
+  }
 }
 
 watch(
   () => itemForm.service,
   () => onServiceChange(),
 )
+
+watch(confirmMode, (mode) => {
+  syncConfirmAmount(mode)
+})
 
 async function loadLookups() {
   await Promise.all([clients.fetchAll(), categories.fetchAll(), services.fetchAll()])
@@ -152,6 +187,8 @@ async function loadInvoice(id: number) {
   header.discount_amount = data.discount_amount
   header.notes = data.notes
   header.issue_date = data.issue_date
+  confirmMode.value = 'completed'
+  syncConfirmAmount('completed')
 }
 
 async function saveAndContinue() {
@@ -190,8 +227,11 @@ async function saveAndContinue() {
 function needsQuantity(method?: CostMethod) {
   return method === 'quantity'
 }
-function needsDims(method?: CostMethod) {
-  return method === 'perimeter' || method === 'area'
+function needsArea(method?: CostMethod) {
+  return method === 'area'
+}
+function needsPerimeterDims(method?: CostMethod) {
+  return method === 'perimeter'
 }
 
 async function addItem() {
@@ -210,7 +250,11 @@ async function addItem() {
     itemError.value = 'الكمية مطلوبة.'
     return
   }
-  if (needsDims(service.cost_method) && (!itemForm.length || !itemForm.width)) {
+  if (needsArea(service.cost_method) && !itemForm.area) {
+    itemError.value = 'المساحة مطلوبة.'
+    return
+  }
+  if (needsPerimeterDims(service.cost_method) && (!itemForm.length || !itemForm.width)) {
     itemError.value = 'الطول والعرض مطلوبان.'
     return
   }
@@ -221,8 +265,10 @@ async function addItem() {
       service: service.id,
       unit_price: itemForm.unit_price,
       quantity: itemForm.quantity || undefined,
-      length: itemForm.length || undefined,
-      width: itemForm.width || undefined,
+      length: needsArea(service.cost_method)
+        ? itemForm.area || undefined
+        : itemForm.length || undefined,
+      width: needsArea(service.cost_method) ? '1' : itemForm.width || undefined,
       discount_amount: itemForm.discount_amount || '0',
     })
     resetItemForm()
@@ -253,19 +299,26 @@ async function confirm() {
     itemError.value = 'أضف بندًا واحدًا على الأقل قبل التأكيد.'
     return
   }
-  const amount = payAmount.value.trim()
-  if (amount !== '' && Number(amount) < 0) {
-    payError.value = 'مبلغ الدفع غير صالح.'
-    return
-  }
-  if (amount !== '' && Number(amount) > Number(invoice.value.total)) {
-    payError.value = 'المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة.'
-    return
+  let amount: string | undefined
+  if (confirmMode.value === 'completed') {
+    amount = invoice.value.total
+  } else if (confirmMode.value === 'without_paid') {
+    amount = undefined
+  } else {
+    amount = payAmount.value.trim()
+    if (amount === '' || Number(amount) <= 0) {
+      payError.value = 'أدخل مبلغ الدفع الجزئي.'
+      return
+    }
+    if (Number(amount) > Number(invoice.value.total)) {
+      payError.value = 'المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة.'
+      return
+    }
   }
   acting.value = true
   payError.value = null
   try {
-    await invoices.confirm(invoice.value.id, amount === '' ? undefined : amount)
+    await invoices.confirm(invoice.value.id, amount)
     payAmount.value = ''
   } catch (err) {
     await handleAuthError(err)
@@ -305,6 +358,7 @@ async function recordPayment() {
 
 async function cancel() {
   if (!invoice.value || acting.value) return
+  if (!window.confirm('هل تريد إلغاء الفاتورة؟')) return
   acting.value = true
   try {
     await invoices.cancel(invoice.value.id)
@@ -412,7 +466,10 @@ watch(
                 <p class="muted">
                   {{ costMethodLabels[item.cost_method] }} · سعر {{ item.unit_price }}
                   <template v-if="item.quantity"> · كمية {{ item.quantity }}</template>
-                  <template v-if="item.length != null">
+                  <template v-if="item.cost_method === 'area' && item.length != null">
+                    · مساحة {{ Number(item.length) * Number(item.width) }}
+                  </template>
+                  <template v-else-if="item.length != null">
                     · {{ item.length }}×{{ item.width }}
                   </template>
                 </p>
@@ -453,29 +510,44 @@ watch(
                   {{ s.name }} — {{ measureLabel(s) }}
                 </option>
               </UiSelect>
-            </div>
-            <div>
-              <UiLabel>السعر</UiLabel>
-              <UiInput v-model="itemForm.unit_price" type="number" min="0" step="0.01" />
+              <p v-if="selectedService" class="service-meta">
+                <span class="pill" :data-fixed="selectedService.is_fixed_cost">
+                  {{ selectedService.is_fixed_cost ? 'سعر ثابت' : 'سعر غير ثابت' }}
+                </span>
+              </p>
             </div>
             <div v-if="selectedService && needsQuantity(selectedService.cost_method)">
               <UiLabel>الكمية</UiLabel>
               <UiInput v-model="itemForm.quantity" type="number" min="0.001" step="0.001" />
             </div>
-            <template v-if="selectedService && needsDims(selectedService.cost_method)">
+            <div class="field-pair">
               <div>
-                <UiLabel>الطول</UiLabel>
-                <UiInput v-model="itemForm.length" type="number" min="0" step="0.001" />
+                <UiLabel>السعر</UiLabel>
+                <UiInput v-model="itemForm.unit_price" type="number" min="0" step="0.01" />
               </div>
               <div>
-                <UiLabel>العرض</UiLabel>
-                <UiInput v-model="itemForm.width" type="number" min="0" step="0.001" />
+                <UiLabel>خصم البند</UiLabel>
+                <UiInput v-model="itemForm.discount_amount" type="number" min="0" step="0.01" />
+              </div>
+            </div>
+            <template v-if="selectedService && !selectedService.is_fixed_cost && needsArea(selectedService.cost_method)">
+              <div class="full">
+                <UiLabel>المساحة</UiLabel>
+                <UiInput v-model="itemForm.area" type="number" min="0" step="0.001" />
               </div>
             </template>
-            <div>
-              <UiLabel>خصم البند</UiLabel>
-              <UiInput v-model="itemForm.discount_amount" type="number" min="0" step="0.01" />
-            </div>
+            <template v-if="selectedService && !selectedService.is_fixed_cost && needsPerimeterDims(selectedService.cost_method)">
+              <div class="field-pair full">
+                <div>
+                  <UiLabel>الطول</UiLabel>
+                  <UiInput v-model="itemForm.length" type="number" min="0" step="0.001" />
+                </div>
+                <div>
+                  <UiLabel>العرض</UiLabel>
+                  <UiInput v-model="itemForm.width" type="number" min="0" step="0.001" />
+                </div>
+              </div>
+            </template>
           </div>
           <p v-if="itemError" class="error">{{ itemError }}</p>
           <UiButton :disabled="savingItem" @click="addItem">
@@ -502,6 +574,13 @@ watch(
         </template>
 
         <div v-if="invoice.status === 'draft'" class="pay-box">
+          <UiLabel>طريقة التأكيد</UiLabel>
+          <UiSelect v-model="confirmMode">
+            <option value="completed">مكتملة</option>
+            <option value="without_paid">بدون دفع</option>
+            <option value="partial">جزئي</option>
+          </UiSelect>
+
           <UiLabel html-for="confirm-pay">المبلغ المدفوع عند التأكيد</UiLabel>
           <UiInput
             id="confirm-pay"
@@ -509,17 +588,29 @@ watch(
             type="number"
             min="0"
             step="0.01"
-            placeholder="0 = بدون دفع"
+            :disabled="confirmMode !== 'partial'"
+            :placeholder="
+              confirmMode === 'completed'
+                ? 'مكتملة'
+                : confirmMode === 'without_paid'
+                  ? 'بدون دفع'
+                  : 'أدخل المبلغ الجزئي'
+            "
           />
           <div class="pay-actions">
-            <UiButton type="button" variant="outline" size="sm" @click="setFullPayment">
-              كامل
+            <UiButton type="button" variant="outline" size="sm" @click="setConfirmMode('completed')">
+              مكتملة
             </UiButton>
-            <UiButton type="button" variant="outline" size="sm" @click="setNoPayment">
+            <UiButton type="button" variant="outline" size="sm" @click="setConfirmMode('without_paid')">
               بدون دفع
             </UiButton>
+            <UiButton type="button" variant="outline" size="sm" @click="setConfirmMode('partial')">
+              جزئي
+            </UiButton>
           </div>
-          <p class="hint">المتبقي بعد الدفع يُسجَّل عهدة على العميل.</p>
+          <p class="hint">
+            {{ confirmMode === 'partial' ? 'المتبقي بعد الدفع يُسجَّل عهدة على العميل.' : 'يمكن تغيير المبلغ فقط عند اختيار جزئي.' }}
+          </p>
         </div>
 
         <div
@@ -609,6 +700,18 @@ watch(
     grid-column: 1 / -1;
   }
 }
+.field-pair {
+  display: grid;
+  gap: 0.85rem;
+}
+@media (min-width: 768px) {
+  .field-pair {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .field-pair.full {
+    grid-column: 1 / -1;
+  }
+}
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -656,6 +759,9 @@ watch(
   margin: 0;
   font-size: 1rem;
 }
+.service-meta {
+  margin: 0.4rem 0 0;
+}
 .summary-row {
   display: flex;
   justify-content: space-between;
@@ -690,6 +796,10 @@ watch(
   border-radius: 999px;
   font-size: 0.8rem;
   background: hsl(var(--muted));
+}
+.pill[data-fixed='true'] {
+  background: hsl(142 40% 90%);
+  color: hsl(142 50% 25%);
 }
 .pill[data-status='confirmed'] {
   background: hsl(142 40% 90%);
