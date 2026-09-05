@@ -1,6 +1,6 @@
 import { apiFetch } from './client'
 
-export type CostMethod = 'fixed' | 'quantity' | 'perimeter' | 'area'
+export type CostMethod = 'fixed' | 'quantity' | 'one_dimension' | 'two_dimensions'
 
 export interface Service {
   id: number

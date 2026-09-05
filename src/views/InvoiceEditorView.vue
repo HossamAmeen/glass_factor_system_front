@@ -3,10 +3,11 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
-import type { CostMethod } from '@/api/invoices'
+import type { CostMethod, InvoicePieceItemPayload } from '@/api/invoices'
 import type { Service } from '@/api/services'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiCard from '@/components/ui/UiCard.vue'
+import UiDialog from '@/components/ui/UiDialog.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiLabel from '@/components/ui/UiLabel.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -16,6 +17,18 @@ import { useClientsStore } from '@/stores/clients'
 import { useInvoicesStore } from '@/stores/invoices'
 import { useServiceCategoriesStore } from '@/stores/serviceCategories'
 import { useServicesStore } from '@/stores/services'
+import { applyDiscount, computeLineSubtotal, roundMoney } from '@/utils/pricing'
+
+interface DraftService {
+  key: number
+  serviceId: number
+  serviceName: string
+  serviceColor: string
+  costMethod: CostMethod
+  unitPrice: string
+  quantity: string
+  discountAmount: string
+}
 
 const props = defineProps<{ id?: string }>()
 
@@ -29,6 +42,7 @@ const route = useRoute()
 
 const headerError = ref<string | null>(null)
 const itemError = ref<string | null>(null)
+const extraError = ref<string | null>(null)
 const savingHeader = ref(false)
 const savingItem = ref(false)
 const acting = ref(false)
@@ -36,6 +50,8 @@ const confirmMode = ref<'completed' | 'without_paid' | 'partial'>('completed')
 const payAmount = ref('')
 const payNotes = ref('')
 const payError = ref<string | null>(null)
+const extraPieceId = ref<number | null>(null)
+let draftKey = 1
 
 const header = reactive({
   client: '' as string | number,
@@ -44,36 +60,75 @@ const header = reactive({
   issue_date: new Date().toISOString().slice(0, 10),
 })
 
+const pieceForm = reactive({
+  length: '',
+  width: '',
+  quantity: '1',
+})
+
 const itemForm = reactive({
   category: '' as string | number,
   service: '' as string | number,
   unit_price: '',
+  total_price: '',
   quantity: '',
-  length: '',
-  width: '',
-  perimeter: '',
   discount_amount: '0',
 })
 
+const extraForm = reactive({
+  category: '' as string | number,
+  service: '' as string | number,
+  unit_price: '',
+  total_price: '',
+  quantity: '',
+  discount_amount: '0',
+})
+
+const draftServices = ref<DraftService[]>([])
+
 const invoice = computed(() => invoices.current)
 const isNew = computed(() => !props.id && !invoice.value?.id)
-const isDraft = computed(() => !invoice.value || invoice.value.status === 'draft')
-const editable = computed(() => isNew.value || isDraft.value)
+const editable = computed(() => isNew.value || !invoice.value || invoice.value.status === 'draft')
+const invoicePieces = computed(() => invoice.value?.pieces ?? [])
+const invoiceItems = computed(() => invoice.value?.items ?? [])
+const legacyInvoiceItems = computed(() =>
+  invoicePieces.value.length ? [] : invoiceItems.value,
+)
+const hasPieces = computed(
+  () => invoicePieces.value.length > 0 || invoiceItems.value.length > 0,
+)
+
+const availableCategories = computed(() =>
+  categories.items.filter((category) =>
+    services.items.some((service) => service.service_category === category.id),
+  ),
+)
 
 const filteredServices = computed(() => {
   if (itemForm.category === '' || itemForm.category == null) return services.items
   return services.items.filter((s) => s.service_category === Number(itemForm.category))
 })
 
+const extraFilteredServices = computed(() => {
+  if (extraForm.category === '' || extraForm.category == null) return services.items
+  return services.items.filter((s) => s.service_category === Number(extraForm.category))
+})
+
 const selectedService = computed(() =>
   services.items.find((s) => s.id === Number(itemForm.service)),
 )
 
-const costMethodLabels: Record<CostMethod, string> = {
+const extraSelectedService = computed(() =>
+  services.items.find((s) => s.id === Number(extraForm.service)),
+)
+
+const costMethodLabels: Record<string, string> = {
   fixed: 'ثابت',
   quantity: 'كمية',
-  perimeter: 'محيط',
-  area: 'مساحة',
+  one_dimension: 'بعد واحد (x×x)',
+  two_dimensions: 'بعدين ((x+y)×2)',
+  perimeter: 'بعدين ((x+y)×2)',
+  area: 'بعد واحد (x×x)',
 }
 
 const statusLabels = {
@@ -128,16 +183,128 @@ function apiErrorMessage(err: unknown, fallback: string) {
   return fallback
 }
 
-function resetItemForm() {
-  itemForm.category = categories.items[0]?.id ?? ''
+function needsQuantity(method?: CostMethod) {
+  return method === 'quantity'
+}
+
+function needsOneDimension(method?: CostMethod) {
+  return method === 'one_dimension' || (method as string) === 'area'
+}
+
+function needsTwoDimensions(method?: CostMethod) {
+  return method === 'two_dimensions' || (method as string) === 'perimeter'
+}
+
+function needsDimensions(method?: CostMethod) {
+  return needsOneDimension(method) || needsTwoDimensions(method)
+}
+
+function isFixedCost(service: Service) {
+  return service.cost_method === 'fixed' || service.is_fixed_cost
+}
+
+function updateCalculatedPrices(source: 'unit' | 'total' | 'dims') {
+  const service = selectedService.value
+  if (!service) return
+
+  const method = service.cost_method
+  const length = pieceForm.length === '' ? null : Number(pieceForm.length)
+  const width = pieceForm.width === '' ? null : Number(pieceForm.width)
+  const quantity = itemForm.quantity === '' ? null : Number(itemForm.quantity)
+
+  let measure = 1
+  if (method === 'one_dimension' || (method as string) === 'area') {
+    const dim = width ?? length ?? 0
+    measure = dim * dim
+  } else if (method === 'two_dimensions' || (method as string) === 'perimeter') {
+    if (length != null && width != null) {
+      measure = 2 * (length + width)
+    }
+  } else if (method === 'quantity') {
+    measure = quantity ?? 1
+  }
+
+  if (source === 'total') {
+    const total = Number(itemForm.total_price) || 0
+    if (measure > 0) {
+      itemForm.unit_price = roundMoney(total / measure).toString()
+    }
+  } else {
+    const unitPrice = Number(itemForm.unit_price) || 0
+    const calculatedTotal = computeLineSubtotal({
+      costMethod: method,
+      unitPrice,
+      quantity,
+      length,
+      width,
+    })
+    itemForm.total_price = calculatedTotal.toString()
+  }
+}
+
+function updateExtraCalculatedPrices(piece: { length: string | null; width: string | null }, source: 'unit' | 'total') {
+  const service = extraSelectedService.value
+  if (!service) return
+
+  const method = service.cost_method
+  const length = piece.length == null ? null : Number(piece.length)
+  const width = piece.width == null ? null : Number(piece.width)
+  const quantity = extraForm.quantity === '' ? null : Number(extraForm.quantity)
+
+  let measure = 1
+  if (method === 'one_dimension' || (method as string) === 'area') {
+    const dim = width ?? length ?? 0
+    measure = dim * dim
+  } else if (method === 'two_dimensions' || (method as string) === 'perimeter') {
+    if (length != null && width != null) {
+      measure = 2 * (length + width)
+    }
+  } else if (method === 'quantity') {
+    measure = quantity ?? 1
+  }
+
+  if (source === 'total') {
+    const total = Number(extraForm.total_price) || 0
+    if (measure > 0) {
+      extraForm.unit_price = roundMoney(total / measure).toString()
+    }
+  } else {
+    const unitPrice = Number(extraForm.unit_price) || 0
+    const calculatedTotal = computeLineSubtotal({
+      costMethod: method,
+      unitPrice,
+      quantity,
+      length,
+      width,
+    })
+    extraForm.total_price = calculatedTotal.toString()
+  }
+}
+
+function resetServicePicker() {
   itemForm.service = ''
   itemForm.unit_price = ''
+  itemForm.total_price = ''
   itemForm.quantity = ''
-  itemForm.length = ''
-  itemForm.width = ''
-  itemForm.perimeter = ''
   itemForm.discount_amount = '0'
+}
+
+function resetPieceForm() {
+  pieceForm.length = ''
+  pieceForm.width = ''
+  pieceForm.quantity = '1'
+  draftServices.value = []
+  resetServicePicker()
   itemError.value = null
+}
+
+function resetExtraForm() {
+  extraForm.service = ''
+  extraForm.unit_price = ''
+  extraForm.total_price = ''
+  extraForm.quantity = ''
+  extraForm.discount_amount = '0'
+  extraError.value = null
 }
 
 function onServiceChange() {
@@ -145,22 +312,23 @@ function onServiceChange() {
   if (!service) return
   itemForm.unit_price = service.cost
   itemForm.category = service.service_category
-  if (isFixedCost(service)) {
-    itemForm.quantity = ''
-    itemForm.length = ''
-    itemForm.width = ''
-    itemForm.perimeter = ''
-    return
-  }
-  if (!needsQuantity(service.cost_method)) {
+  if (isFixedCost(service) || !needsQuantity(service.cost_method)) {
     itemForm.quantity = ''
   }
-  if (!needsArea(service.cost_method)) {
-    itemForm.length = ''
-    itemForm.width = ''
+  updateCalculatedPrices('unit')
+}
+
+function onExtraServiceChange() {
+  const service = extraSelectedService.value
+  if (!service) return
+  extraForm.unit_price = service.cost
+  extraForm.category = service.service_category
+  if (isFixedCost(service) || !needsQuantity(service.cost_method)) {
+    extraForm.quantity = ''
   }
-  if (!needsPerimeter(service.cost_method)) {
-    itemForm.perimeter = ''
+  const piece = invoice.value?.pieces.find((p) => p.id === extraPieceId.value)
+  if (piece) {
+    updateExtraCalculatedPrices(piece, 'unit')
   }
 }
 
@@ -169,15 +337,355 @@ watch(
   () => onServiceChange(),
 )
 
+watch(
+  () => extraForm.service,
+  () => onExtraServiceChange(),
+)
+
+watch(
+  () => [pieceForm.length, pieceForm.width],
+  () => {
+    updateCalculatedPrices('dims')
+  },
+)
+
 watch(confirmMode, (mode) => {
   syncConfirmAmount(mode)
 })
 
+watch(
+  () => invoice.value?.total,
+  () => {
+    syncConfirmAmount(confirmMode.value)
+  },
+)
+
+const showConfirmSuccess = ref(false)
+const showConfirmDialog = ref(false)
+
+const draftNeedsTwoDimensions = computed(() => {
+  if (selectedService.value) {
+    if (isFixedCost(selectedService.value) || selectedService.value.cost_method === 'fixed') return false
+    return needsTwoDimensions(selectedService.value.cost_method)
+  }
+  return draftServices.value.some((row) => needsTwoDimensions(row.costMethod))
+})
+
+const draftNeedsOneDimension = computed(() => {
+  if (selectedService.value) {
+    if (isFixedCost(selectedService.value) || selectedService.value.cost_method === 'fixed') return false
+    return needsOneDimension(selectedService.value.cost_method)
+  }
+  return draftServices.value.some((row) => needsOneDimension(row.costMethod))
+})
+
+const draftNeedsDimensions = computed(() => draftNeedsOneDimension.value || draftNeedsTwoDimensions.value)
+
+const showDimensionInputs = computed(() => {
+  if (selectedService.value) {
+    if (isFixedCost(selectedService.value) || selectedService.value.cost_method === 'fixed' || selectedService.value.cost_method === 'quantity') {
+      return false
+    }
+    return needsDimensions(selectedService.value.cost_method)
+  }
+  return draftNeedsDimensions.value
+})
+
+const showTwoDimensions = computed(() => {
+  if (selectedService.value) {
+    if (isFixedCost(selectedService.value) || selectedService.value.cost_method === 'fixed') return false
+    return needsTwoDimensions(selectedService.value.cost_method)
+  }
+  return draftNeedsTwoDimensions.value
+})
+
+function serviceAmount(row: {
+  costMethod: CostMethod
+  unitPrice: string
+  quantity: string
+  discountAmount: string
+}): number {
+  const length = pieceForm.length === '' ? null : Number(pieceForm.length)
+  const width = pieceForm.width === '' ? null : Number(pieceForm.width)
+  const subtotal = computeLineSubtotal({
+    costMethod: row.costMethod,
+    unitPrice: Number(row.unitPrice) || 0,
+    quantity: row.quantity === '' ? null : Number(row.quantity),
+    length,
+    width,
+  })
+  return applyDiscount(subtotal, Number(row.discountAmount) || 0)
+}
+
+const previewServices = computed(() => {
+  const rows = [...draftServices.value]
+  if (selectedService.value && itemForm.unit_price) {
+    rows.push({
+      key: 0,
+      serviceId: selectedService.value.id,
+      serviceName: selectedService.value.name,
+      serviceColor: selectedService.value.color,
+      costMethod: selectedService.value.cost_method,
+      unitPrice: itemForm.unit_price,
+      quantity: itemForm.quantity,
+      discountAmount: itemForm.discount_amount,
+    })
+  }
+  return rows
+})
+
+const piecePreview = computed(() => {
+  const one = roundMoney(previewServices.value.reduce((sum, row) => sum + serviceAmount(row), 0))
+  const qty = Number(pieceForm.quantity) || 1
+  return { one, all: roundMoney(one * qty), qty }
+})
+
+function validateServiceRow(
+  service: Service | undefined,
+  unitPrice: string,
+  quantity: string,
+  requireDimensions: boolean,
+): string | null {
+  if (!service) return 'اختر خدمة.'
+  if (!unitPrice) return 'السعر مطلوب.'
+  if (needsQuantity(service.cost_method) && !quantity) return 'الكمية مطلوبة.'
+  if (requireDimensions && !isFixedCost(service) && service.cost_method !== 'fixed') {
+    if (needsTwoDimensions(service.cost_method) && (!pieceForm.length || !pieceForm.width)) {
+      return 'الطول والعرض مطلوبان لهذه الخدمة.'
+    }
+    if (needsOneDimension(service.cost_method) && (!pieceForm.width && !pieceForm.length)) {
+      return 'العرض (أو الطول) مطلوب لهذه الخدمة.'
+    }
+  }
+  return null
+}
+
+function addServiceToDraft() {
+  itemError.value = null
+  const service = selectedService.value
+  const error = validateServiceRow(service, itemForm.unit_price, itemForm.quantity, true)
+  if (error || !service) {
+    itemError.value = error
+    return
+  }
+  draftServices.value.push({
+    key: draftKey++,
+    serviceId: service.id,
+    serviceName: service.name,
+    serviceColor: service.color,
+    costMethod: service.cost_method,
+    unitPrice: itemForm.unit_price,
+    quantity: itemForm.quantity,
+    discountAmount: itemForm.discount_amount || '0',
+  })
+  resetServicePicker()
+}
+
+async function addStandaloneItem() {
+  if (savingItem.value || !invoice.value || !editable.value) return
+  itemError.value = null
+
+  const service = selectedService.value
+  const error = validateServiceRow(service, itemForm.unit_price, itemForm.quantity, true)
+  if (error || !service) {
+    itemError.value = error
+    return
+  }
+
+  savingItem.value = true
+  try {
+    await invoices.addItem(invoice.value.id, {
+      service: service.id,
+      unit_price: itemForm.unit_price,
+      quantity: itemForm.quantity || undefined,
+      discount_amount: itemForm.discount_amount || '0',
+      length: pieceForm.length || undefined,
+      width: pieceForm.width || undefined,
+      piece_quantity: pieceForm.quantity,
+    })
+    resetPieceForm()
+  } catch (err) {
+    await handleAuthError(err)
+    itemError.value = apiErrorMessage(err, 'تعذر إضافة الخدمة.')
+  } finally {
+    savingItem.value = false
+  }
+}
+
+async function addPendingThroughItems(invoiceId: number, pending: DraftService[]) {
+  let latest = invoices.current
+  for (const [index, row] of pending.entries()) {
+    const pieceId = index > 0 ? latest?.pieces?.[latest.pieces.length - 1]?.id : undefined
+    latest = await invoices.addItem(invoiceId, {
+      ...toItemPayload(row),
+      length: pieceId == null ? pieceForm.length || undefined : undefined,
+      width: pieceId == null ? pieceForm.width || undefined : undefined,
+      piece: pieceId,
+      piece_quantity: pieceId == null ? pieceForm.quantity : undefined,
+    })
+  }
+}
+
+function removeDraftService(key: number) {
+  draftServices.value = draftServices.value.filter((row) => row.key !== key)
+}
+
+function toItemPayload(row: DraftService | {
+  serviceId: number
+  unitPrice: string
+  quantity: string
+  discountAmount: string
+}): InvoicePieceItemPayload {
+  return {
+    service: row.serviceId,
+    unit_price: row.unitPrice,
+    quantity: row.quantity || undefined,
+    discount_amount: row.discountAmount || '0',
+  }
+}
+
+async function addPiece() {
+  if (savingItem.value || !invoice.value || !editable.value) return
+  itemError.value = null
+
+  const pending: DraftService[] = [...draftServices.value]
+  if (selectedService.value && itemForm.unit_price) {
+    const error = validateServiceRow(
+      selectedService.value,
+      itemForm.unit_price,
+      itemForm.quantity,
+      true,
+    )
+    if (error) {
+      itemError.value = error
+      return
+    }
+    pending.push({
+      key: 0,
+      serviceId: selectedService.value.id,
+      serviceName: selectedService.value.name,
+      serviceColor: selectedService.value.color,
+      costMethod: selectedService.value.cost_method,
+      unitPrice: itemForm.unit_price,
+      quantity: itemForm.quantity,
+      discountAmount: itemForm.discount_amount || '0',
+    })
+  }
+
+  if (!pending.length) {
+    itemError.value = 'أضف خدمة واحدة على الأقل للقطعة.'
+    return
+  }
+  const requiresTwo = pending.some((row) => needsTwoDimensions(row.costMethod))
+  const requiresOne = pending.some((row) => needsOneDimension(row.costMethod))
+
+  if (requiresTwo && (!pieceForm.length || !pieceForm.width)) {
+    itemError.value = 'الطول والعرض مطلوبان.'
+    return
+  }
+  if (requiresOne && (!pieceForm.width && !pieceForm.length)) {
+    itemError.value = 'العرض مطلوب.'
+    return
+  }
+
+  savingItem.value = true
+  try {
+    try {
+      await invoices.addPiece(invoice.value.id, {
+        length: pieceForm.length || undefined,
+        width: pieceForm.width || undefined,
+        quantity: '1',
+        items: pending.map((row) => toItemPayload(row)),
+      })
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 404) throw err
+      await addPendingThroughItems(invoice.value.id, pending)
+    }
+    resetPieceForm()
+  } catch (err) {
+    await handleAuthError(err)
+    itemError.value = apiErrorMessage(err, 'تعذر إضافة القطعة.')
+  } finally {
+    savingItem.value = false
+  }
+}
+
+async function addServiceToPiece(pieceId: number) {
+  if (savingItem.value || !invoice.value || !editable.value) return
+  extraError.value = null
+  const service = extraSelectedService.value
+  const piece = invoice.value.pieces.find((p) => p.id === pieceId)
+  const needsDims = Boolean(service && needsDimensions(service.cost_method))
+  const missingDims = needsDims && (piece?.length == null || piece?.width == null)
+  const error = validateServiceRow(service, extraForm.unit_price, extraForm.quantity, false)
+  if (error || !service) {
+    extraError.value = error
+    return
+  }
+  if (missingDims) {
+    extraError.value = 'هذه القطعة بلا مقاس. أضف الخدمة ذات البعدين أو البعد الواحد لقطعة بها مقاسات.'
+    return
+  }
+
+  savingItem.value = true
+  try {
+    await invoices.addItem(invoice.value.id, {
+      service: service.id,
+      unit_price: extraForm.unit_price,
+      quantity: extraForm.quantity || undefined,
+      discount_amount: extraForm.discount_amount || '0',
+      piece: pieceId,
+    })
+    extraPieceId.value = null
+    resetExtraForm()
+  } catch (err) {
+    await handleAuthError(err)
+    extraError.value = apiErrorMessage(err, 'تعذر إضافة الخدمة.')
+  } finally {
+    savingItem.value = false
+  }
+}
+
+function openExtraForm(pieceId: number) {
+  extraPieceId.value = pieceId
+  extraForm.category = availableCategories.value[0]?.id ?? ''
+  resetExtraForm()
+}
+
+async function removeItem(itemId: number) {
+  if (!invoice.value || !editable.value || acting.value) return
+  acting.value = true
+  try {
+    await invoices.removeItem(invoice.value.id, itemId)
+  } catch (err) {
+    await handleAuthError(err)
+    itemError.value = apiErrorMessage(err, 'تعذر حذف الخدمة.')
+  } finally {
+    acting.value = false
+  }
+}
+
+async function removePiece(pieceId: number) {
+  if (!invoice.value || !editable.value || acting.value) return
+  acting.value = true
+  try {
+    await invoices.removePiece(invoice.value.id, pieceId)
+  } catch (err) {
+    await handleAuthError(err)
+    itemError.value = apiErrorMessage(err, 'تعذر حذف القطعة.')
+  } finally {
+    acting.value = false
+  }
+}
+
 async function loadLookups() {
   await Promise.all([clients.fetchAll(), categories.fetchAll(), services.fetchAll()])
   if (!header.client && clients.items[0]) header.client = clients.items[0].id
-  if (!itemForm.category && categories.items[0]) {
-    itemForm.category = categories.items[0].id
+  if (!itemForm.category && availableCategories.value[0]) {
+    itemForm.category = availableCategories.value[0].id
+  }
+  if (!extraForm.category && availableCategories.value[0]) {
+    extraForm.category = availableCategories.value[0].id
   }
 }
 
@@ -224,92 +732,10 @@ async function saveAndContinue() {
   }
 }
 
-function needsQuantity(method?: CostMethod) {
-  return method === 'quantity'
-}
-function needsArea(method?: CostMethod) {
-  return method === 'area'
-}
-function needsPerimeter(method?: CostMethod) {
-  return method === 'perimeter'
-}
-
-function isFixedCost(service: Service) {
-  return service.cost_method === 'fixed' || service.is_fixed_cost
-}
-
-async function addItem() {
-  if (savingItem.value || !invoice.value || !editable.value) return
-  itemError.value = null
-  const service = selectedService.value
-  if (!service) {
-    itemError.value = 'اختر خدمة.'
-    return
-  }
-  if (!itemForm.unit_price) {
-    itemError.value = 'السعر مطلوب.'
-    return
-  }
-  if (needsQuantity(service.cost_method) && !itemForm.quantity) {
-    itemError.value = 'الكمية مطلوبة.'
-    return
-  }
-  if (needsArea(service.cost_method) && (!itemForm.length || !itemForm.width)) {
-    itemError.value = 'الطول والعرض مطلوبان.'
-    return
-  }
-  if (needsPerimeter(service.cost_method) && !itemForm.perimeter) {
-    itemError.value = 'القياس مطلوب.'
-    return
-  }
-
-  savingItem.value = true
-  try {
-    const isArea = needsArea(service.cost_method)
-    const isPerimeter = needsPerimeter(service.cost_method)
-    const perimeterValue = itemForm.perimeter || undefined
-    await invoices.addItem(invoice.value.id, {
-      service: service.id,
-      unit_price: itemForm.unit_price,
-      quantity: itemForm.quantity || undefined,
-      length: isArea
-        ? itemForm.length || undefined
-        : isPerimeter
-          ? perimeterValue
-          : undefined,
-      width: isArea
-        ? itemForm.width || undefined
-        : isPerimeter
-          ? perimeterValue
-          : undefined,
-      discount_amount: itemForm.discount_amount || '0',
-    })
-    resetItemForm()
-  } catch (err) {
-    await handleAuthError(err)
-    itemError.value = apiErrorMessage(err, 'تعذر إضافة البند.')
-  } finally {
-    savingItem.value = false
-  }
-}
-
-async function removeItem(itemId: number) {
-  if (!invoice.value || !editable.value || acting.value) return
-  acting.value = true
-  try {
-    await invoices.removeItem(invoice.value.id, itemId)
-  } catch (err) {
-    await handleAuthError(err)
-    itemError.value = apiErrorMessage(err, 'تعذر حذف البند.')
-  } finally {
-    acting.value = false
-  }
-}
-
 async function confirm() {
   if (!invoice.value || acting.value) return
-  if (!invoice.value.items.length) {
-    itemError.value = 'أضف بندًا واحدًا على الأقل قبل التأكيد.'
+  if (!hasPieces.value) {
+    itemError.value = 'أضف قطعة واحدة على الأقل قبل التأكيد.'
     return
   }
   let amount: string | undefined
@@ -318,7 +744,7 @@ async function confirm() {
   } else if (confirmMode.value === 'without_paid') {
     amount = undefined
   } else {
-    amount = payAmount.value.trim()
+    amount = String(payAmount.value ?? '').trim()
     if (amount === '' || Number(amount) <= 0) {
       payError.value = 'أدخل مبلغ الدفع الجزئي.'
       return
@@ -330,9 +756,14 @@ async function confirm() {
   }
   acting.value = true
   payError.value = null
+  showConfirmSuccess.value = false
+  showConfirmDialog.value = false
   try {
     await invoices.confirm(invoice.value.id, amount)
     payAmount.value = ''
+    showConfirmSuccess.value = true
+    showConfirmDialog.value = true
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   } catch (err) {
     await handleAuthError(err)
     payError.value = apiErrorMessage(err, 'تعذر تأكيد الفاتورة.')
@@ -343,7 +774,7 @@ async function confirm() {
 
 async function recordPayment() {
   if (!invoice.value || acting.value) return
-  const amount = payAmount.value.trim()
+  const amount = String(payAmount.value ?? '').trim()
   if (!amount || Number(amount) <= 0) {
     payError.value = 'أدخل مبلغ الدفع.'
     return
@@ -357,7 +788,7 @@ async function recordPayment() {
   try {
     await invoices.pay(invoice.value.id, {
       amount,
-      notes: payNotes.value.trim(),
+      notes: String(payNotes.value ?? '').trim(),
     })
     payAmount.value = ''
     payNotes.value = ''
@@ -383,8 +814,28 @@ async function cancel() {
   }
 }
 
+function pieceSizeLabel(length: string | null, width: string | null) {
+  if (length != null && width != null && length !== '' && width !== '') return `${length} × ${width}`
+  if (width != null && width !== '') return `${width}`
+  if (length != null && length !== '') return `${length}`
+  return 'بدون مقاس'
+}
+
+function itemDimensionLabel(
+  item: { length?: string | null; width?: string | null; cost_method?: string },
+  piece: { length: string | null; width: string | null },
+): string | null {
+  if (item.cost_method === 'fixed') return null
+  const len = item.length ?? piece.length
+  const wid = item.width ?? piece.width
+  if (len != null && wid != null && len !== '' && wid !== '') return `${len} × ${wid}`
+  if (wid != null && wid !== '') return `${wid}`
+  if (len != null && len !== '') return `${len}`
+  return null
+}
+
 function measureLabel(service: Service) {
-  return costMethodLabels[service.cost_method]
+  return costMethodLabels[service.cost_method] ?? service.cost_method
 }
 
 onMounted(async () => {
@@ -414,6 +865,53 @@ watch(
 
 <template>
   <div class="page">
+    <UiDialog v-model:open="showConfirmDialog" title="تم تأكيد الفاتورة بنجاح 🎉">
+      <div class="confirm-dialog-content">
+        <div class="success-icon-badge">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+        <p class="confirm-dialog-desc">
+          تم تأكيد الفاتورة رقم <strong>{{ invoice?.number }}</strong> بنجاح.
+        </p>
+        <div class="confirm-dialog-details">
+          <div class="detail-item">
+            <span class="detail-label">إجمالي الفاتورة</span>
+            <strong class="detail-value">{{ invoice?.total }} ج.م</strong>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">المبلغ المدفوع</span>
+            <strong class="detail-value text-success">{{ invoice?.amount_paid }} ج.م</strong>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">المتبقي على العميل</span>
+            <strong class="detail-value">{{ invoice?.amount_remaining }} ج.م</strong>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <UiButton class="full-width-btn" @click="showConfirmDialog = false">
+          حسناً / إغلاق
+        </UiButton>
+      </template>
+    </UiDialog>
+
+    <div v-if="showConfirmSuccess" class="alert-success">
+      <span>✓ تم تأكيد الفاتورة بنجاح!</span>
+      <UiButton variant="ghost" size="sm" @click="showConfirmSuccess = false">إغلاق</UiButton>
+    </div>
+
     <header class="page-header">
       <div>
         <h1>{{ isNew ? 'فاتورة جديدة' : invoice?.number }}</h1>
@@ -423,7 +921,7 @@ watch(
             {{ statusLabels[invoice.status] }}
           </span>
         </p>
-        <p v-else class="muted">أدخل العميل ثم احفظ للمتابعة وإضافة البنود</p>
+        <p v-else class="muted">أدخل العميل ثم احفظ للمتابعة وإضافة القطع</p>
       </div>
       <UiButton variant="outline" @click="router.push({ name: 'invoices' })">
         رجوع
@@ -465,55 +963,189 @@ watch(
 
     <template v-if="invoice">
       <UiCard>
-        <h2 class="section-title">بنود الفاتورة</h2>
+        <h2 class="section-title">قطع الفاتورة</h2>
 
-        <div class="items">
-          <article v-for="item in invoice.items" :key="item.id" class="item-card">
-            <div class="item-info">
-              <div
-                class="item-color-swatch"
-                :style="{ backgroundColor: item.service_color }"
-              ></div>
+        <div class="pieces">
+          <article v-for="piece in invoicePieces" :key="piece.id" class="piece-card">
+            <header class="piece-header">
               <div>
-                <strong>{{ item.service_name }}</strong>
-                <p class="muted">
-                  {{ costMethodLabels[item.cost_method] }} · سعر {{ item.unit_price }}
-                  <template v-if="item.quantity"> · كمية {{ item.quantity }}</template>
-                  <template v-if="item.cost_method === 'area' && item.length != null && item.width != null">
-                    · مساحة {{ Number(item.length) * Number(item.width) }}
-                  </template>
-                  <template v-else-if="item.cost_method === 'perimeter' && item.length != null">
-                    · محيط {{ item.length }}
-                  </template>
-                  <template v-else-if="item.length != null && item.width != null">
-                    · {{ item.length }}×{{ item.width }}
-                  </template>
-                </p>
+                <strong>قطعة {{ pieceSizeLabel(piece.length, piece.width) }}</strong>
+                <p class="muted">عدد القطع: {{ piece.quantity }}</p>
+              </div>
+              <div class="piece-totals">
+                <span>إجمالي القطعة {{ piece.piece_subtotal }}</span>
+                <strong>إجمالي القطع {{ piece.piece_total }}</strong>
+              </div>
+            </header>
+
+            <div class="piece-services">
+              <div v-for="item in piece.items" :key="item.id" class="item-card">
+                <div class="item-info">
+                  <div
+                    class="item-color-swatch"
+                    :style="{ backgroundColor: item.service_color }"
+                  ></div>
+                  <div>
+                    <strong>{{ item.service_name }}</strong>
+                    <p class="muted">
+                      {{ costMethodLabels[item.cost_method] ?? item.cost_method }}
+                      <template v-if="itemDimensionLabel(item, piece)"> · المقاس: {{ itemDimensionLabel(item, piece) }}</template>
+                      · سعر {{ item.unit_price }}
+                      <template v-if="item.quantity"> · كمية {{ item.quantity }}</template>
+                    </p>
+                  </div>
+                </div>
+                <div class="item-total">
+                  <span>{{ item.line_total }}</span>
+                  <UiButton
+                    v-if="editable"
+                    variant="destructive"
+                    size="sm"
+                    :disabled="acting"
+                    @click="removeItem(item.id)"
+                  >
+                    حذف
+                  </UiButton>
+                </div>
               </div>
             </div>
-            <div class="item-total">
-              <span>{{ item.line_total }}</span>
+
+            <div v-if="editable" class="piece-actions">
               <UiButton
-                v-if="editable"
                 variant="outline"
+                size="sm"
                 :disabled="acting"
-                @click="removeItem(item.id)"
+                @click="openExtraForm(piece.id)"
               >
-                حذف
+                إضافة خدمة لهذه القطعة
+              </UiButton>
+              <UiButton
+                variant="destructive"
+                size="sm"
+                :disabled="acting"
+                @click="removePiece(piece.id)"
+              >
+                حذف القطعة
               </UiButton>
             </div>
+
+            <div v-if="editable && extraPieceId === piece.id" class="extra-form">
+              <h4>خدمة إضافية</h4>
+              <div class="grid">
+                <div>
+                  <UiLabel>تصنيف (فلتر)</UiLabel>
+                  <UiSelect v-model="extraForm.category">
+                    <option value="">الكل</option>
+                    <option v-for="cat in availableCategories" :key="cat.id" :value="cat.id">
+                      {{ cat.name }}
+                    </option>
+                  </UiSelect>
+                </div>
+                <div>
+                  <UiLabel>الخدمة</UiLabel>
+                  <UiSelect v-model="extraForm.service">
+                    <option disabled value="">اختر خدمة</option>
+                    <option v-for="s in extraFilteredServices" :key="s.id" :value="s.id">
+                      {{ s.name }} — {{ measureLabel(s) }}
+                    </option>
+                  </UiSelect>
+                </div>
+                <div v-if="extraSelectedService && needsQuantity(extraSelectedService.cost_method)">
+                  <UiLabel>الكمية</UiLabel>
+                  <UiInput v-model="extraForm.quantity" type="number" min="0.001" step="0.001" />
+                </div>
+                <div v-if="extraSelectedService" class="grid full">
+                  <div>
+                    <UiLabel>السعر (الوحدة)</UiLabel>
+                    <UiInput
+                      v-model="extraForm.unit_price"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      @input="() => {
+                        const p = invoice?.pieces.find((x) => x.id === extraPieceId)
+                        if (p) updateExtraCalculatedPrices(p, 'unit')
+                      }"
+                    />
+                  </div>
+                  <div>
+                    <UiLabel>إجمالي سعر الخدمة للقطعة</UiLabel>
+                    <UiInput
+                      v-model="extraForm.total_price"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      @input="() => {
+                        const p = invoice?.pieces.find((x) => x.id === extraPieceId)
+                        if (p) updateExtraCalculatedPrices(p, 'total')
+                      }"
+                    />
+                  </div>
+                  <div>
+                    <UiLabel>خصم الخدمة</UiLabel>
+                    <UiInput v-model="extraForm.discount_amount" type="number" min="0" step="0.01" />
+                  </div>
+                </div>
+              </div>
+              <p v-if="extraError" class="error">{{ extraError }}</p>
+              <div class="actions">
+                <UiButton :disabled="savingItem" @click="addServiceToPiece(piece.id)">
+                  {{ savingItem ? 'جاري الإضافة...' : 'حفظ الخدمة' }}
+                </UiButton>
+                <UiButton variant="outline" @click="extraPieceId = null">إلغاء</UiButton>
+              </div>
+            </div>
           </article>
-          <p v-if="!invoice.items.length" class="muted">لا توجد بنود بعد.</p>
+
+          <div v-if="legacyInvoiceItems.length" class="piece-services legacy-items">
+            <h3 class="legacy-title">الخدمات الحالية</h3>
+            <div v-for="item in legacyInvoiceItems" :key="item.id" class="item-card">
+              <div class="item-info">
+                <div
+                  class="item-color-swatch"
+                  :style="{ backgroundColor: item.service_color }"
+                ></div>
+                <div>
+                  <strong>{{ item.service_name }}</strong>
+                  <p class="muted">
+                    {{ costMethodLabels[item.cost_method] ?? item.cost_method }}
+                    <template v-if="itemDimensionLabel(item, { length: null, width: null })"> · المقاس: {{ itemDimensionLabel(item, { length: null, width: null }) }}</template>
+                    · سعر {{ item.unit_price }}
+                    <template v-if="item.quantity"> · كمية {{ item.quantity }}</template>
+                  </p>
+                </div>
+              </div>
+              <div class="item-total">
+                <span>{{ item.line_total }}</span>
+                <UiButton
+                  v-if="editable"
+                  variant="destructive"
+                  size="sm"
+                  :disabled="acting"
+                  @click="removeItem(item.id)"
+                >
+                  حذف الخدمة
+                </UiButton>
+              </div>
+            </div>
+          </div>
+
+          <p v-if="!invoicePieces.length && !legacyInvoiceItems.length" class="muted">
+            لا توجد خدمات بعد.
+          </p>
         </div>
 
         <div v-if="editable" class="item-form">
-          <h3>إضافة بند</h3>
+          <h3>إضافة قطعة / خدمة</h3>
+          <p class="hint">اختر الخدمة أولاً، ثم أدخل المقاسات أو الكمية والسعر.</p>
+
+          <!-- 1. الخدمة والتصنيف أولاً -->
           <div class="grid">
             <div>
               <UiLabel>تصنيف (فلتر)</UiLabel>
               <UiSelect v-model="itemForm.category">
                 <option value="">الكل</option>
-                <option v-for="cat in categories.items" :key="cat.id" :value="cat.id">
+                <option v-for="cat in availableCategories" :key="cat.id" :value="cat.id">
                   {{ cat.name }}
                 </option>
               </UiSelect>
@@ -532,49 +1164,122 @@ watch(
                 </span>
               </p>
             </div>
-            <div v-if="selectedService && needsQuantity(selectedService.cost_method)">
-              <UiLabel>الكمية</UiLabel>
-              <UiInput v-model="itemForm.quantity" type="number" min="0.001" step="0.001" />
-            </div>
-            <div class="field-pair">
-              <div>
-                <UiLabel>السعر</UiLabel>
-                <UiInput v-model="itemForm.unit_price" type="number" min="0" step="0.01" />
-              </div>
-              <div>
-                <UiLabel>خصم البند</UiLabel>
-                <UiInput v-model="itemForm.discount_amount" type="number" min="0" step="0.01" />
-              </div>
-            </div>
-            <template v-if="selectedService && needsArea(selectedService.cost_method)">
-              <div class="field-pair full">
-                <div>
-                  <UiLabel>الطول</UiLabel>
-                  <UiInput v-model="itemForm.length" type="number" min="0" step="0.001" />
-                </div>
-                <div>
-                  <UiLabel>العرض</UiLabel>
-                  <UiInput v-model="itemForm.width" type="number" min="0" step="0.001" />
-                </div>
-              </div>
-            </template>
-            <template v-if="selectedService && needsPerimeter(selectedService.cost_method)">
-              <div class="full">
-                <UiLabel>المحيط</UiLabel>
-                <UiInput v-model="itemForm.perimeter" type="number" min="0" step="0.001" />
-              </div>
-            </template>
           </div>
+
+          <!-- 2. المقاسات بناءً على الخدمة المحددة (أو باقي الخدمات المضافة للقطعة) -->
+          <div
+            v-if="draftNeedsDimensions || (selectedService && needsDimensions(selectedService.cost_method))"
+            class="grid"
+          >
+            <div v-if="draftNeedsTwoDimensions || (selectedService && needsTwoDimensions(selectedService.cost_method))">
+              <UiLabel>الطول (x)</UiLabel>
+              <UiInput
+                v-model="pieceForm.length"
+                type="number"
+                min="0"
+                step="0.001"
+                placeholder="أدخل الطول"
+                @input="updateCalculatedPrices('dims')"
+              />
+            </div>
+            <div v-if="draftNeedsDimensions || (selectedService && needsDimensions(selectedService.cost_method))">
+              <UiLabel>{{ (selectedService && needsOneDimension(selectedService.cost_method)) || (draftNeedsOneDimension && !draftNeedsTwoDimensions) ? 'البعد / العرض (x)' : 'العرض (y)' }}</UiLabel>
+              <UiInput
+                v-model="pieceForm.width"
+                type="number"
+                min="0"
+                step="0.001"
+                placeholder="أدخل العرض / البعد"
+                @input="updateCalculatedPrices('dims')"
+              />
+            </div>
+          </div>
+
+          <!-- 3. الكمية للخدمة (إن كانت ذات كمية) -->
+          <div v-if="selectedService && needsQuantity(selectedService.cost_method)" class="grid">
+            <div>
+              <UiLabel>الكمية</UiLabel>
+              <UiInput
+                v-model="itemForm.quantity"
+                type="number"
+                min="0.001"
+                step="0.001"
+                @input="updateCalculatedPrices('unit')"
+              />
+            </div>
+          </div>
+
+          <!-- 4. سعر الوحدة وإجمالي سعر الخدمة للقطعة وخصم الخدمة -->
+          <div v-if="selectedService" class="grid">
+            <div>
+              <UiLabel>سعر الوحدة</UiLabel>
+              <UiInput
+                v-model="itemForm.unit_price"
+                type="number"
+                min="0"
+                step="0.01"
+                @input="updateCalculatedPrices('unit')"
+              />
+            </div>
+            <div>
+              <UiLabel>إجمالي سعر الخدمة للقطعة</UiLabel>
+              <UiInput
+                v-model="itemForm.total_price"
+                type="number"
+                min="0"
+                step="0.01"
+                @input="updateCalculatedPrices('total')"
+              />
+            </div>
+            <div>
+              <UiLabel>خصم الخدمة</UiLabel>
+              <UiInput
+                v-model="itemForm.discount_amount"
+                type="number"
+                min="0"
+                step="0.01"
+                @input="updateCalculatedPrices('unit')"
+              />
+            </div>
+          </div>
+
+          <!-- 5. الخدمات المؤقتة المضافة لهذه القطعة -->
+          <div v-if="draftServices.length" class="draft-list">
+            <h4>الخدمات المضافة لهذه القطعة:</h4>
+            <div v-for="row in draftServices" :key="row.key" class="draft-row">
+              <span
+                class="item-color-swatch"
+                :style="{ backgroundColor: row.serviceColor }"
+              ></span>
+              <span>{{ row.serviceName }} · {{ costMethodLabels[row.costMethod] }}</span>
+              <strong>{{ serviceAmount(row).toFixed(2) }} ج.م</strong>
+              <UiButton variant="destructive" size="sm" @click="removeDraftService(row.key)">حذف</UiButton>
+            </div>
+          </div>
+
+          <!-- 6. معاينة الإجمالي والزر -->
+          <div v-if="previewServices.length" class="preview">
+            <div class="summary-row total">
+              <span>إجمالي القطعة</span>
+              <strong>{{ piecePreview.one.toFixed(2) }}</strong>
+            </div>
+          </div>
+
           <p v-if="itemError" class="error">{{ itemError }}</p>
-          <UiButton :disabled="savingItem" @click="addItem">
-            {{ savingItem ? 'جاري الإضافة...' : 'إضافة البند' }}
-          </UiButton>
+          <div class="actions">
+            <UiButton variant="outline" :disabled="savingItem" @click="addServiceToDraft">
+              إضافة خدمة أخرى للقطعة
+            </UiButton>
+            <UiButton :disabled="savingItem" @click="addPiece">
+              {{ savingItem ? 'جاري الإضافة...' : 'حفظ القطعة' }}
+            </UiButton>
+          </div>
         </div>
       </UiCard>
 
       <UiCard class="summary sticky">
         <h2 class="section-title">الملخص</h2>
-        <div class="summary-row"><span>مجموع البنود</span><strong>{{ invoice.subtotal }}</strong></div>
+        <div class="summary-row"><span>مجموع القطع</span><strong>{{ invoice.subtotal }}</strong></div>
         <div class="summary-row"><span>خصم الفاتورة</span><strong>{{ invoice.discount_amount }}</strong></div>
         <div class="summary-row total"><span>الإجمالي</span><strong>{{ invoice.total }}</strong></div>
         <template v-if="invoice.status !== 'draft'">
@@ -658,14 +1363,14 @@ watch(
         <div class="actions">
           <UiButton
             v-if="invoice.status === 'draft'"
-            :disabled="acting || !invoice.items.length"
+            :disabled="acting || !hasPieces"
             @click="confirm"
           >
             تأكيد الفاتورة
           </UiButton>
           <UiButton
             v-if="invoice.status !== 'cancelled'"
-            variant="outline"
+            variant="destructive"
             :disabled="acting"
             @click="cancel"
           >
@@ -734,17 +1439,38 @@ watch(
   gap: 0.75rem;
   margin-top: 1rem;
 }
-.items {
+.pieces {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.piece-card {
   display: grid;
   gap: 0.75rem;
-  margin-bottom: 1.25rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.piece-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.piece-totals {
+  display: grid;
+  gap: 0.2rem;
+  justify-items: end;
+  font-size: 0.95rem;
+}
+.piece-services {
+  display: grid;
+  gap: 0.35rem;
 }
 .item-card {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.85rem 0;
-  border-bottom: 1px solid hsl(var(--border));
+  padding: 0.5rem 0;
 }
 .item-info {
   display: flex;
@@ -765,18 +1491,34 @@ watch(
   justify-items: end;
   font-weight: 600;
 }
+.piece-actions,
+.draft-list {
+  display: grid;
+  gap: 0.5rem;
+}
+.draft-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.extra-form,
 .item-form {
   display: grid;
   gap: 0.85rem;
   padding-top: 0.5rem;
   border-top: 1px solid hsl(var(--border));
 }
-.item-form h3 {
+.item-form h3,
+.extra-form h4 {
   margin: 0;
   font-size: 1rem;
 }
 .service-meta {
   margin: 0.4rem 0 0;
+}
+.preview {
+  padding-top: 0.5rem;
 }
 .summary-row {
   display: flex;
@@ -831,5 +1573,52 @@ watch(
     bottom: 0.5rem;
     z-index: 5;
   }
+}
+.confirm-dialog-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0.75rem 0;
+  gap: 0.85rem;
+}
+.success-icon-badge {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  background: hsl(142 50% 92%);
+  color: hsl(142 65% 35%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 20px hsl(142 50% 50% / 0.2);
+}
+.confirm-dialog-desc {
+  margin: 0;
+  font-size: 1rem;
+  color: hsl(var(--foreground));
+}
+.confirm-dialog-details {
+  width: 100%;
+  background: hsl(var(--muted) / 0.5);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.85rem 1rem;
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+}
+.detail-label {
+  color: hsl(var(--muted-foreground));
+}
+.text-success {
+  color: hsl(142 65% 35%);
+}
+.full-width-btn {
+  width: 100%;
 }
 </style>

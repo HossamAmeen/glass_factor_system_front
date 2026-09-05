@@ -28,7 +28,7 @@ const form = reactive({
   name: '',
   service_category: '' as string | number,
   cost: '',
-  cost_method: 'perimeter' as CostMethod,
+  cost_method: 'two_dimensions' as CostMethod,
   is_fixed_cost: false,
   is_additional_service: false,
   color: '#3b82f6',
@@ -39,8 +39,8 @@ const hasCategories = computed(() => categories.items.length > 0)
 const costMethodLabels: Record<CostMethod, string> = {
   fixed: 'ثابت',
   quantity: 'كمية',
-  perimeter: 'المحيط',
-  area: 'المساحة',
+  one_dimension: 'بعد واحد (x×x)',
+  two_dimensions: 'بعدين ((x+y)×2)',
 }
 
 function resetForm() {
@@ -48,7 +48,7 @@ function resetForm() {
   form.name = ''
   form.service_category = categories.items[0]?.id ?? ''
   form.cost = ''
-  form.cost_method = 'perimeter'
+  form.cost_method = 'two_dimensions'
   form.is_fixed_cost = false
   form.is_additional_service = false
   form.color = '#3b82f6'
@@ -108,7 +108,7 @@ async function onSubmit() {
     formError.value = 'السعر مطلوب.'
     return
   }
-  if (!['fixed', 'quantity', 'perimeter', 'area'].includes(form.cost_method)) {
+  if (!['fixed', 'quantity', 'one_dimension', 'two_dimensions'].includes(form.cost_method)) {
     formError.value = 'اختر طريقة حساب صحيحة.'
     return
   }
@@ -259,8 +259,8 @@ onMounted(() => {
           <UiSelect id="service-cost-method" v-model="form.cost_method" required>
             <option value="fixed">ثابت</option>
             <option value="quantity">كمية</option>
-            <option value="perimeter">المحيط</option>
-            <option value="area">المساحة</option>
+            <option value="one_dimension">بعد واحد (x×x)</option>
+            <option value="two_dimensions">بعدين ((x+y)×2)</option>
           </UiSelect>
         </div>
         <div class="ui-field color-field">

@@ -3,10 +3,11 @@ import { apiFetch } from './client'
 export type InvoiceStatus = 'draft' | 'confirmed' | 'cancelled'
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid'
 
-export type CostMethod = 'fixed' | 'quantity' | 'perimeter' | 'area'
+export type CostMethod = 'fixed' | 'quantity' | 'one_dimension' | 'two_dimensions'
 
 export interface InvoiceItem {
   id: number
+  piece: number
   service: number
   service_name: string
   service_color: string
@@ -19,6 +20,20 @@ export interface InvoiceItem {
   line_subtotal: string
   line_total: string
   position: number
+  created_at: string
+  updated_at: string
+}
+
+export interface InvoicePiece {
+  id: number
+  length: string | null
+  width: string | null
+  quantity: string
+  notes: string
+  piece_subtotal: string
+  piece_total: string
+  position: number
+  items: InvoiceItem[]
   created_at: string
   updated_at: string
 }
@@ -40,6 +55,7 @@ export interface Invoice {
   is_settled: boolean
   confirmed_at: string | null
   cancelled_at: string | null
+  pieces: InvoicePiece[]
   items: InvoiceItem[]
   created_at: string
   updated_at: string
@@ -62,6 +78,30 @@ export interface InvoiceItemPayload {
   length?: string
   width?: string
   discount_amount?: string
+  piece?: number
+  piece_quantity?: string
+}
+
+export interface InvoicePieceItemPayload {
+  service: number
+  unit_price?: string
+  quantity?: string
+  discount_amount?: string
+}
+
+export interface InvoicePiecePayload {
+  length?: string
+  width?: string
+  quantity?: string
+  notes?: string
+  items: InvoicePieceItemPayload[]
+}
+
+export interface InvoicePieceUpdatePayload {
+  length?: string
+  width?: string
+  quantity?: string
+  notes?: string
 }
 
 export interface InvoicePaymentPayload {
@@ -137,6 +177,30 @@ export function updateInvoiceItem(
 
 export function deleteInvoiceItem(invoiceId: number, itemId: number) {
   return apiFetch<Invoice>(`/api/v1/invoices/${invoiceId}/items/${itemId}/`, {
+    method: 'DELETE',
+  })
+}
+
+export function addInvoicePiece(invoiceId: number, payload: InvoicePiecePayload) {
+  return apiFetch<Invoice>(`/api/v1/invoices/${invoiceId}/pieces/`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateInvoicePiece(
+  invoiceId: number,
+  pieceId: number,
+  payload: InvoicePieceUpdatePayload,
+) {
+  return apiFetch<Invoice>(`/api/v1/invoices/${invoiceId}/pieces/${pieceId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteInvoicePiece(invoiceId: number, pieceId: number) {
+  return apiFetch<Invoice>(`/api/v1/invoices/${invoiceId}/pieces/${pieceId}/`, {
     method: 'DELETE',
   })
 }

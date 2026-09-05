@@ -4,6 +4,9 @@ import { computed, ref } from 'vue'
 import { login as loginRequest } from '@/api/auth'
 import { ApiError, clearTokens, getAccessToken } from '@/api/client'
 
+const LOGIN_ERROR_MESSAGE = 'somthing get wrong contact with adminstratot'
+const INVALID_CREDENTIALS_MESSAGE = 'اسم المستخدم أو كلمة المرور خطأ'
+
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(getAccessToken())
   const error = ref<string | null>(null)
@@ -20,11 +23,9 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (err) {
       accessToken.value = null
       clearTokens()
-      if (err instanceof ApiError && err.status === 500) {
-        error.value = `حدث خطا مع الاتصال بالسيرفر\n${err.url}`
-      } else {
-        error.value = 'اسم المستخدم أو كلمة المرور غير صحيحة'
-      }
+      error.value = err instanceof ApiError && err.status === 401
+        ? INVALID_CREDENTIALS_MESSAGE
+        : LOGIN_ERROR_MESSAGE
       throw err
     } finally {
       loading.value = false

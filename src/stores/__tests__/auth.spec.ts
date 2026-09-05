@@ -34,7 +34,18 @@ describe('useAuthStore', () => {
     expect(store.isAuthenticated).toBe(true)
   })
 
-  it('shows server error details on 500 login failures', async () => {
+  it('shows an invalid credentials message for unauthorized login', async () => {
+    loginMock.mockRejectedValueOnce(
+      new ApiError('Request failed: 401', 401, { detail: 'boom' }, 'http://127.0.0.1:8000/api/auth/token/'),
+    )
+
+    const store = useAuthStore()
+
+    await expect(store.login('admin', 'admin')).rejects.toBeInstanceOf(Error)
+    expect(store.error).toBe('اسم المستخدم أو كلمة المرور خطأ')
+  })
+
+  it('shows a generic fallback on other login failures', async () => {
     loginMock.mockRejectedValueOnce(
       new ApiError('Request failed: 500', 500, { detail: 'boom' }, 'http://127.0.0.1:8000/api/auth/token/'),
     )
@@ -42,7 +53,6 @@ describe('useAuthStore', () => {
     const store = useAuthStore()
 
     await expect(store.login('admin', 'admin')).rejects.toBeInstanceOf(Error)
-    expect(store.error).toContain('حدث خطا مع الاتصال بالسيرفر')
-    expect(store.error).toContain('http://127.0.0.1:8000/api/auth/token/')
+    expect(store.error).toBe('somthing get wrong contact with adminstratot')
   })
 })

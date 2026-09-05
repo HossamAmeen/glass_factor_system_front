@@ -4,19 +4,24 @@ import { ref } from 'vue'
 import { ApiError } from '@/api/client'
 import {
   addInvoiceItem,
+  addInvoicePiece,
   cancelInvoice,
   confirmInvoice,
   createInvoice,
   deleteInvoice,
   deleteInvoiceItem,
+  deleteInvoicePiece,
   getInvoice,
   listInvoices,
   payInvoice,
   updateInvoice,
+  updateInvoicePiece,
   type Invoice,
   type InvoiceCreatePayload,
   type InvoiceItemPayload,
   type InvoicePaymentPayload,
+  type InvoicePiecePayload,
+  type InvoicePieceUpdatePayload,
   type InvoiceStatus,
 } from '@/api/invoices'
 
@@ -85,6 +90,28 @@ export const useInvoicesStore = defineStore('invoices', () => {
     return invoice
   }
 
+  async function addPiece(invoiceId: number, payload: InvoicePiecePayload) {
+    const invoice = await addInvoicePiece(invoiceId, payload)
+    current.value = invoice
+    return invoice
+  }
+
+  async function updatePiece(
+    invoiceId: number,
+    pieceId: number,
+    payload: InvoicePieceUpdatePayload,
+  ) {
+    const invoice = await updateInvoicePiece(invoiceId, pieceId, payload)
+    current.value = invoice
+    return invoice
+  }
+
+  async function removePiece(invoiceId: number, pieceId: number) {
+    const invoice = await deleteInvoicePiece(invoiceId, pieceId)
+    current.value = invoice
+    return invoice
+  }
+
   async function confirm(invoiceId: number, amountPaid?: string) {
     const invoice = await confirmInvoice(invoiceId, amountPaid)
     current.value = invoice
@@ -125,6 +152,9 @@ export const useInvoicesStore = defineStore('invoices', () => {
     updateHeader,
     addItem,
     removeItem,
+    addPiece,
+    updatePiece,
+    removePiece,
     confirm,
     pay,
     cancel,
