@@ -82,6 +82,8 @@ const extraForm = reactive({
   total_price: '',
   quantity: '',
   discount_amount: '0',
+  length: '',
+  width: '',
 })
 
 const draftServices = ref<DraftService[]>([])
@@ -121,6 +123,25 @@ const selectedService = computed(() =>
 const extraSelectedService = computed(() =>
   services.items.find((s) => s.id === Number(extraForm.service)),
 )
+
+const extraPiece = computed(() =>
+  invoice.value?.pieces.find((p) => p.id === extraPieceId.value),
+)
+
+const extraPieceHasDims = computed(() => {
+  const piece = extraPiece.value
+  return Boolean(piece && piece.length != null && piece.width != null)
+})
+
+const showExtraDimensionInputs = computed(() => {
+  const service = extraSelectedService.value
+  return Boolean(service && needsDimensions(service.cost_method) && !extraPieceHasDims.value)
+})
+
+const showExtraTwoDimensions = computed(() => {
+  const service = extraSelectedService.value
+  return Boolean(service && needsTwoDimensions(service.cost_method) && !extraPieceHasDims.value)
+})
 
 const costMethodLabels: Record<string, string> = {
   fixed: 'ثابت',
@@ -242,13 +263,24 @@ function updateCalculatedPrices(source: 'unit' | 'total' | 'dims') {
   }
 }
 
-function updateExtraCalculatedPrices(piece: { length: string | null; width: string | null }, source: 'unit' | 'total') {
+function updateExtraCalculatedPrices(source: 'unit' | 'total' | 'dims') {
   const service = extraSelectedService.value
   if (!service) return
 
+  const piece = extraPiece.value
   const method = service.cost_method
-  const length = piece.length == null ? null : Number(piece.length)
-  const width = piece.width == null ? null : Number(piece.width)
+  const length =
+    piece?.length != null
+      ? Number(piece.length)
+      : extraForm.length === ''
+        ? null
+        : Number(extraForm.length)
+  const width =
+    piece?.width != null
+      ? Number(piece.width)
+      : extraForm.width === ''
+        ? null
+        : Number(extraForm.width)
   const quantity = extraForm.quantity === '' ? null : Number(extraForm.quantity)
 
   let measure = 1
@@ -304,6 +336,8 @@ function resetExtraForm() {
   extraForm.total_price = ''
   extraForm.quantity = ''
   extraForm.discount_amount = '0'
+  extraForm.length = ''
+  extraForm.width = ''
   extraError.value = null
 }
 
@@ -323,14 +357,18 @@ function onExtraServiceChange() {
   if (!service) return
   extraForm.unit_price = service.cost
   extraForm.category = service.service_category
+  extraForm.length = ''
+  extraForm.width = ''
   if (isFixedCost(service) || !needsQuantity(service.cost_method)) {
     extraForm.quantity = ''
   }
-  const piece = invoice.value?.pieces.find((p) => p.id === extraPieceId.value)
-  if (piece) {
-    updateExtraCalculatedPrices(piece, 'unit')
-  }
+  updateExtraCalculatedPrices('unit')
 }
+
+watch(
+  () => [extraForm.length, extraForm.width],
+  () => updateExtraCalculatedPrices('dims'),
+)
 
 watch(
   () => itemForm.service,
@@ -615,16 +653,21 @@ async function addServiceToPiece(pieceId: number) {
   extraError.value = null
   const service = extraSelectedService.value
   const piece = invoice.value.pieces.find((p) => p.id === pieceId)
-  const needsDims = Boolean(service && needsDimensions(service.cost_method))
-  const missingDims = needsDims && (piece?.length == null || piece?.width == null)
+  const pieceHasDims = piece?.length != null && piece?.width != null
   const error = validateServiceRow(service, extraForm.unit_price, extraForm.quantity, false)
   if (error || !service) {
     extraError.value = error
     return
   }
-  if (missingDims) {
-    extraError.value = 'هذه القطعة بلا مقاس. أضف الخدمة ذات البعدين أو البعد الواحد لقطعة بها مقاسات.'
-    return
+  if (needsDimensions(service.cost_method) && !pieceHasDims) {
+    if (needsTwoDimensions(service.cost_method) && (!extraForm.length || !extraForm.width)) {
+      extraError.value = 'الطول والعرض مطلوبان لهذه الخدمة.'
+      return
+    }
+    if (needsOneDimension(service.cost_method) && !extraForm.width && !extraForm.length) {
+      extraError.value = 'العرض (أو الطول) مطلوب لهذه الخدمة.'
+      return
+    }
   }
 
   savingItem.value = true
@@ -635,6 +678,8 @@ async function addServiceToPiece(pieceId: number) {
       quantity: extraForm.quantity || undefined,
       discount_amount: extraForm.discount_amount || '0',
       piece: pieceId,
+      length: pieceHasDims ? undefined : extraForm.length || undefined,
+      width: pieceHasDims ? undefined : extraForm.width || undefined,
     })
     extraPieceId.value = null
     resetExtraForm()
@@ -1052,7 +1097,35 @@ watch(
                 </div>
                 <div v-if="extraSelectedService && needsQuantity(extraSelectedService.cost_method)">
                   <UiLabel>الكمية</UiLabel>
-                  <UiInput v-model="extraForm.quantity" type="number" min="0.001" step="0.001" />
+                  <UiInput
+                    v-model="extraForm.quantity"
+                    type="number"
+                    min="0.001"
+                    step="0.001"
+                    @input="updateExtraCalculatedPrices('unit')"
+                  />
+                </div>
+                <div v-if="showExtraDimensionInputs" class="grid">
+                  <div v-if="showExtraTwoDimensions">
+                    <UiLabel>الطول (x)</UiLabel>
+                    <UiInput
+                      v-model="extraForm.length"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      placeholder="أدخل الطول"
+                    />
+                  </div>
+                  <div>
+                    <UiLabel>{{ showExtraTwoDimensions ? 'العرض (y)' : 'البعد / العرض (x)' }}</UiLabel>
+                    <UiInput
+                      v-model="extraForm.width"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      placeholder="أدخل العرض / البعد"
+                    />
+                  </div>
                 </div>
                 <div v-if="extraSelectedService" class="grid full">
                   <div>
@@ -1062,10 +1135,7 @@ watch(
                       type="number"
                       min="0"
                       step="0.01"
-                      @input="() => {
-                        const p = invoice?.pieces.find((x) => x.id === extraPieceId)
-                        if (p) updateExtraCalculatedPrices(p, 'unit')
-                      }"
+                      @input="updateExtraCalculatedPrices('unit')"
                     />
                   </div>
                   <div>
@@ -1075,10 +1145,7 @@ watch(
                       type="number"
                       min="0"
                       step="0.01"
-                      @input="() => {
-                        const p = invoice?.pieces.find((x) => x.id === extraPieceId)
-                        if (p) updateExtraCalculatedPrices(p, 'total')
-                      }"
+                      @input="updateExtraCalculatedPrices('total')"
                     />
                   </div>
                   <div>
@@ -1092,7 +1159,16 @@ watch(
                 <UiButton :disabled="savingItem" @click="addServiceToPiece(piece.id)">
                   {{ savingItem ? 'جاري الإضافة...' : 'حفظ الخدمة' }}
                 </UiButton>
-                <UiButton variant="outline" @click="extraPieceId = null">إلغاء</UiButton>
+                <UiButton
+                  variant="outline"
+                  @click="
+                    () => {
+                      extraPieceId = null
+                      resetExtraForm()
+                    }
+                  "
+                  >إلغاء</UiButton
+                >
               </div>
             </div>
           </article>
